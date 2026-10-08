@@ -44,16 +44,18 @@ export class Audio {
     for (const s of Object.values(SOUNDS)) [].concat(s.file).forEach((f) => files.add(f));
     for (const f of files) this.load(f);
 
+    // Resume on every gesture: some browsers (iOS Safari) suspend the context on their own.
+    this.gestured = false;
     const unlock = () => {
-      this.ctx.resume();
-      this.startMusic();
+      this.gestured = true;
+      if (!document.hidden) this.ctx.resume().then(() => this.startMusic());
     };
-    window.addEventListener('pointerdown', unlock, { once: true, capture: true });
-    window.addEventListener('keydown', unlock, { once: true, capture: true });
+    window.addEventListener('pointerdown', unlock, { capture: true });
+    window.addEventListener('keydown', unlock, { capture: true });
     // Pause everything while the tab is hidden.
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.ctx.suspend();
-      else if (this.unlocked) this.ctx.resume();
+      else if (this.gestured) this.ctx.resume();
     });
   }
 

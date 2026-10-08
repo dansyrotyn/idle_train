@@ -73,7 +73,19 @@ def mix(length, *parts):
     return out
 
 
-def save(name, x, peak=0.9):
+# Sound effects are pitched down by this factor (0.75 ≈ 5 semitones lower, a bit longer).
+SFX_PITCH = 0.75
+
+
+def pitch(x, factor):
+    """Resample: factor < 1 lowers pitch and stretches the sound."""
+    src = np.arange(len(x))
+    return np.interp(np.arange(0, len(x) - 1, factor), src, x)
+
+
+def save(name, x, peak=0.9, pitched=True):
+    if pitched:
+        x = pitch(x, SFX_PITCH)
     x = x / (np.max(np.abs(x)) + 1e-9) * peak
     fade = min(len(x), int(0.005 * SR))
     x[-fade:] *= np.linspace(1, 0, fade)
@@ -234,4 +246,4 @@ if __name__ == '__main__':
     save('coin_fly', coin_fly())
     save('goal_complete', goal_complete())
     save('stage_complete', stage_complete())
-    save('music', music(), 0.8)
+    save('music', music(), 0.8, pitched=False)
