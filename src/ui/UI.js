@@ -4,8 +4,8 @@ import { ARROW_RIGHT_SVG, ARROW_UP_SVG, CLOSE_SVG, COIN_SVG, GEAR_SVG, PLUS_SVG 
 const TUTORIAL_TEXT = {
   add: 'TAP TO ADD A CAR',
   merge: 'MERGE TWO CARS',
-  gate: 'ADD A REWARD LINE',
-  track: 'UPGRADE THE TRACK',
+  gate: 'ADD A REWARD LANE',
+  track: 'UPGRADE THE ROAD',
 };
 
 const TEMPLATE = /* html */ `
@@ -29,9 +29,9 @@ const TEMPLATE = /* html */ `
       <div class="goal-bar"><div class="goal-fill" data-id="goal-fill"></div><span data-id="goal-progress"></span></div>
     </div>
     <div class="actions" data-id="actions">
-      <button class="act act-merge" data-action="merge" aria-label="Merge train">
+      <button class="act act-merge" data-action="merge" aria-label="Merge cars">
         <div class="act-icon icon-merge"><img data-id="icon-merge-a" alt=""><span class="arrow">${ARROW_RIGHT_SVG}</span><img data-id="icon-merge-b" alt=""></div>
-        <div class="act-body"><div class="act-title">MERGE<br>TRAIN</div><div class="price"><span class="coin-icon">${COIN_SVG}</span><span data-id="price-merge"></span></div></div>
+        <div class="act-body"><div class="act-title">MERGE<br>CARS</div><div class="price"><span class="coin-icon">${COIN_SVG}</span><span data-id="price-merge"></span></div></div>
       </button>
       <button class="act act-add" data-action="add" aria-label="Add car">
         <div class="act-icon icon-add"><img data-id="icon-add" alt=""><span class="badge">${PLUS_SVG}</span></div>
@@ -39,11 +39,11 @@ const TEMPLATE = /* html */ `
       </button>
       <button class="act act-gate" data-action="gate" aria-label="Add reward line">
         <div class="act-icon icon-gate"><img data-id="icon-gate" alt=""></div>
-        <div class="act-body"><div class="act-title">ADD REWARD<br>LINE</div><div class="price"><span class="coin-icon">${COIN_SVG}</span><span data-id="price-gate"></span></div></div>
+        <div class="act-body"><div class="act-title">ADD REWARD<br>LANE</div><div class="price"><span class="coin-icon">${COIN_SVG}</span><span data-id="price-gate"></span></div></div>
       </button>
       <button class="act act-track" data-action="track" aria-label="Upgrade track">
         <div class="act-icon icon-track"><img data-id="icon-track" alt=""><span class="badge up">${ARROW_UP_SVG}</span></div>
-        <div class="act-body"><div class="act-title">UPGRADE<br>TRACK</div><div class="price"><span class="coin-icon">${COIN_SVG}</span><span data-id="price-track"></span></div></div>
+        <div class="act-body"><div class="act-title">UPGRADE<br>ROAD</div><div class="price"><span class="coin-icon">${COIN_SVG}</span><span data-id="price-track"></span></div></div>
       </button>
     </div>
   </div>
@@ -337,8 +337,8 @@ export class UI {
       <div class="dgrid two">
         <button class="dbtn" data-act="goal">COMPLETE GOAL</button>
         <button class="dbtn" data-act="stage">SKIP STAGE</button>
-        <button class="dbtn" data-act="track">TRACK +1 (FREE)</button>
-        <button class="dbtn" data-act="gate">REWARD LINE (FREE)</button>
+        <button class="dbtn" data-act="track">ROAD +1 (FREE)</button>
+        <button class="dbtn" data-act="gate">REWARD LANE (FREE)</button>
         <button class="dbtn" data-act="fps">TOGGLE FPS</button>
         <button class="dbtn red" data-act="reset">RESET PROGRESS</button>
       </div>`, 'debug-modal');
@@ -366,13 +366,13 @@ export class UI {
     m.querySelector('[data-act="lvl-"]').addEventListener('click', () => step(-1));
     m.querySelector('[data-act="lvl+"]').addEventListener('click', () => step(1));
     m.querySelector('[data-act="add-car"]').addEventListener('click', () => {
-      if (!dbg.addCar(dbg.carLevel)) this.toast('TRAIN IS FULL');
+      if (!dbg.addCar(dbg.carLevel)) this.toast('ROAD IS FULL');
     });
     const on = (act, fn) => m.querySelector(`[data-act="${act}"]`).addEventListener('click', fn);
     on('goal', () => dbg.completeGoal());
     on('stage', () => dbg.skipStage());
     on('track', () => {
-      if (!dbg.upgradeTrack()) this.toast('TRACK IS MAX');
+      if (!dbg.upgradeTrack()) this.toast('ROAD IS MAX');
     });
     on('gate', () => {
       if (!dbg.addGate()) this.toast('NO FREE SLOT');

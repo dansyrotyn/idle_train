@@ -1,9 +1,7 @@
 // Gameplay, economy and world tuning. Everything balance-related lives here.
 
-export const TRACK_HEIGHT = 10; // deck top above the street
-export const CAR_LENGTH = 5.2;
-export const CAR_GAP = 0.35;
-export const CAR_PITCH = CAR_LENGTH + CAR_GAP;
+export const TRACK_HEIGHT = 0.33; // road surface above the street (the loop is a ground-level city street)
+export const CAR_SPACING = 7.4; // distance between car centers in the convoy
 
 // Economy ported 1:1 from BallMerge3D (Assets/_Project/_Data/*.asset + scene values).
 // Car price / merge price use its ProgressivePriceBalance: quadratic up to a soft cap, then linear,
@@ -23,53 +21,50 @@ export const ECONOMY = {
   offline: { minSeconds: 30, maxSeconds: 3600, efficiency: 0.07 },
 };
 
-// Track levels. Polygons are (x, z) on the 30-unit street grid; long straights run
-// through block middles (±15, ±45, ±75) so the viaduct crosses streets, never runs along them.
+// Road levels. Polygons are (x, z) on the 30-unit street grid: the loop runs along real
+// city streets (multiples of 30), so buildings and sidewalks line it on both sides.
 // `price` is the cost of upgrading TO this level (BallMerge3D TrackUpgradeConfig).
 // `lapTime` (seconds) sets the train speed: BallMerge3D tracks are 75–170 units at speed 10, so
 // laps take 7.5–17 s, and income/sec depends only on lap time. Caps match its track prefabs.
 export const TRACKS = [
   {
-    points: [[-15, -15], [15, -15], [15, 15], [-15, 15]],
-    radius: 8, lapTime: 8, maxCars: 10, maxGates: 8, price: 0,
+    points: [[0, 0], [30, 0], [30, 30], [0, 30]],
+    radius: 14, lapTime: 8, maxCars: 10, maxGates: 8, price: 0,
   },
   {
-    points: [[-45, -15], [15, -15], [15, 15], [-45, 15]],
-    radius: 9, lapTime: 9, maxCars: 12, maxGates: 10, price: 220e3,
+    points: [[-30, 0], [30, 0], [30, 30], [-30, 30]],
+    radius: 14, lapTime: 9, maxCars: 12, maxGates: 10, price: 220e3,
   },
   {
-    points: [[-45, -45], [15, -45], [15, 15], [-45, 15]],
-    radius: 10, lapTime: 10, maxCars: 14, maxGates: 10, price: 1.95e6,
+    points: [[-30, -30], [30, -30], [30, 30], [-30, 30]],
+    radius: 13, lapTime: 10, maxCars: 14, maxGates: 10, price: 1.95e6,
   },
   {
-    points: [[-45, -45], [45, -45], [45, -15], [15, -15], [15, 15], [-45, 15]],
+    points: [[-30, -30], [60, -30], [60, 0], [30, 0], [30, 30], [-30, 30]],
     radius: 10, lapTime: 12, maxCars: 16, maxGates: 12, price: 2.8e6,
   },
   {
-    points: [[-45, -45], [45, -45], [45, 45], [-15, 45], [-15, 15], [-45, 15]],
+    points: [[-30, -30], [60, -30], [60, 60], [0, 60], [0, 30], [-30, 30]],
     radius: 10, lapTime: 14, maxCars: 18, maxGates: 14, price: 4e6,
   },
   {
-    points: [[-75, -45], [45, -45], [45, 45], [-75, 45], [-75, 15], [-15, 15], [-15, -15], [-75, -15]],
+    points: [[-60, -30], [60, -30], [60, 60], [-60, 60], [-60, 30], [0, 30], [0, 0], [-60, 0]],
     radius: 10, lapTime: 16, maxCars: 18, maxGates: 16, price: 6.5e6,
   },
 ];
 
-// Car liveries by level: 2 white → red, 2 red → green, and so on.
-// Levels past the end of this list get generated colors.
+// Cars by level, from a rusty beater to a supercar. Every level is a new model and color,
+// so the level reads from the silhouette as well as the paint.
 export const CAR_LEVELS = [
-  { body: 0xeef1f5, stripe: 0xe53935 }, // 1 classic white
-  { body: 0xe53935, stripe: 0xffffff }, // 2 red
-  { body: 0x37c25a, stripe: 0xfff176 }, // 3 green
-  { body: 0x2f7ff0, stripe: 0xffffff }, // 4 blue
-  { body: 0x9b51e0, stripe: 0xffd54f }, // 5 purple
-  { body: 0xff8a1f, stripe: 0x37474f }, // 6 orange
-  { body: 0x18c6d8, stripe: 0xffffff }, // 7 cyan
-  { body: 0xff5fa2, stripe: 0xffffff }, // 8 pink
-  { body: 0xf5c518, stripe: 0x8d5a00, metal: 0.65 }, // 9 gold
-  { body: 0x2b2f38, stripe: 0x2ee6ff, neon: true }, // 10 black neon
-  { body: 0xd5dde8, stripe: 0x7c4dff, metal: 0.85 }, // 11 chrome
-  { body: 0xb3122f, stripe: 0xffd700, metal: 0.4 }, // 12 ruby
+  { model: 'beater', body: 0xb89a6c, stripe: 0x8a6f4a, metal: 0.05 }, // 1 rusty beater
+  { model: 'sedan', body: 0x6f93bf, stripe: 0xffffff }, // 2 family sedan
+  { model: 'taxi', body: 0xffc21a, stripe: 0x111111 }, // 3 yellow cab
+  { model: 'hothatch', body: 0xe53935, stripe: 0xffffff }, // 4 hot hatch
+  { model: 'muscle', body: 0xff7a1a, stripe: 0xffffff }, // 5 muscle car
+  { model: 'jdm', body: 0x2f6ff0, stripe: 0xffffff, metal: 0.45 }, // 6 90s sports coupe
+  { model: 'tuned', body: 0x9b51e0, stripe: 0x2ee6ff, glow: 0x2ee6ff, metal: 0.5 }, // 7 tuned, neon underglow
+  { model: 'limo', body: 0x1c1f26, stripe: 0xe6ebf2, metal: 0.7 }, // 8 limo
+  { model: 'supercar', body: 0xf5c518, stripe: 0x1c1f26, metal: 0.65 }, // 9 supercar
 ];
 
 // Stages = BallMerge3D Level_01..Level_25 goals. After the last stage, the last 5 loop.

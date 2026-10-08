@@ -11,7 +11,7 @@ function box(w, h, d, x, y, z, mat) {
   return m;
 }
 
-// Reward lines: slot 0 is the station, the rest are neon gates over the track.
+// Reward lanes: slot 0 is the toll plaza, the rest are 90s neon gates over the road.
 export class Gates {
   constructor(scene) {
     this.group = new THREE.Group();
@@ -23,13 +23,14 @@ export class Gates {
 
     const coinFace = coinFaceTexture();
     this.mats = {
-      frame: new THREE.MeshLambertMaterial({ color: 0x3d4656 }),
-      frameLight: new THREE.MeshLambertMaterial({ color: 0x5a6578 }),
-      cyan: new THREE.MeshBasicMaterial({ color: 0x46e0ff }),
-      yellow: new THREE.MeshBasicMaterial({ color: 0xffd23f }),
+      frame: new THREE.MeshLambertMaterial({ color: 0x23202e }),
+      frameLight: new THREE.MeshLambertMaterial({ color: 0x3a3350 }),
+      cyan: new THREE.MeshBasicMaterial({ color: 0xff3fa4 }), // 90s neon pink
+      yellow: new THREE.MeshBasicMaterial({ color: 0x2ee6ff }), // neon cyan
+      stripeRed: new THREE.MeshLambertMaterial({ color: 0xe53935 }),
       gold: new THREE.MeshStandardMaterial({ color: 0xffc531, metalness: 0.6, roughness: 0.3, emissive: 0x6b4300 }),
       coinFace: new THREE.MeshStandardMaterial({ map: coinFace, metalness: 0.4, roughness: 0.35, emissive: 0x4a3000 }),
-      roof: new THREE.MeshLambertMaterial({ color: 0x2f6fd6 }),
+      roof: new THREE.MeshLambertMaterial({ color: 0x2b3d63 }),
       roofTrim: new THREE.MeshLambertMaterial({ color: 0xf2f5fa }),
       platform: new THREE.MeshLambertMaterial({ color: 0xd8d0c3 }),
       edge: new THREE.MeshBasicMaterial({ color: 0xffd23f }),
@@ -71,7 +72,7 @@ export class Gates {
     const p = this.path.pointAt(st.s);
     const t = this.path.tangentAt(st.s);
     const side = this.path.outwardSide(st.s);
-    return [{ x: p.x - t.z * side * 5, z: p.z + t.x * side * 5, r: 10 }];
+    return [{ x: p.x - t.z * side * 4, z: p.z + t.x * side * 4, r: 6 }];
   }
 
   clear() {
@@ -149,56 +150,56 @@ export class Gates {
     return g;
   }
 
-  // side: +1 when the outside of the loop is to the right of travel. Local +x is the
-  // travel-left side, so the platform goes to local x = -side * ...
+  // Slot 0: a 90s toll plaza. side: +1 when the outside of the loop is to the right of
+  // travel; local +x is the travel-left side, so the booth goes to local x = -side * ...
   createStation(side) {
     const m = this.mats;
     const sx = -side;
     const g = new THREE.Group();
-    const len = 13;
 
-    const platform = box(3.6, 0.9, len, sx * 4.8, 0.05, 0, m.platform);
-    platform.castShadow = platform.receiveShadow = true;
-    g.add(platform);
-    g.add(box(0.25, 0.03, len, sx * 3.25, 0.51, 0, m.edge));
-    for (const z of [-4.5, 4.5]) {
-      const col = box(1.2, H - 0.4, 1.2, sx * 4.8, -(H + 0.4) / 2, z, m.column);
+    // Canopy over the lane on two pillars, with a TOLL sign on both faces.
+    for (const x of [-3.3, 3.3]) {
+      const col = box(0.6, 5.6, 0.6, x, 2.8, 0, m.post);
       col.castShadow = true;
       g.add(col);
     }
-
-    const roof = box(10.4, 0.45, len + 1, sx * 1.7, 5.65, 0, m.roof);
+    const roof = box(8.6, 0.6, 4.2, 0, 5.9, 0, m.roof);
     roof.castShadow = true;
-    g.add(roof);
-    g.add(box(10.6, 0.16, len + 1.2, sx * 1.7, 5.35, 0, m.roofTrim));
-    for (const z of [-5.5, 0, 5.5]) g.add(box(0.3, 4.9, 0.3, sx * 6.3, 2.95, z, m.post));
-    for (const z of [-5.5, 5.5]) g.add(box(0.3, 4.8, 0.3, -sx * 2.85, 2.95, z, m.post));
-    g.add(box(0.08, 4.1, len - 1, sx * 6.45, 2.6, 0, m.glass));
-
-    for (const z of [-3, 3]) {
-      g.add(box(0.6, 0.12, 2.4, sx * 5.6, 0.95, z, m.bench));
-      g.add(box(0.12, 0.5, 2.4, sx * 5.9, 1.2, z, m.bench));
-    }
-
-    for (const z of [-(len / 2 + 0.55), len / 2 + 0.55]) {
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.8), m.sign);
-      sign.position.set(sx * 4.8, 4.3, z);
+    g.add(roof, box(8.8, 0.18, 4.4, 0, 5.55, 0, m.roofTrim));
+    for (const z of [-2.2, 2.2]) {
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 1.05), m.sign);
+      sign.position.set(0, 6.0, z + Math.sign(z) * 0.02);
+      if (z < 0) sign.rotation.y = Math.PI;
       g.add(sign);
     }
+    g.add(box(8.6, 0.12, 0.12, 0, 5.25, -2.1, m.cyan), box(8.6, 0.12, 0.12, 0, 5.25, 2.1, m.cyan));
 
-    // A few passengers waiting on the platform.
-    for (let i = 0; i < 5; i++) {
-      const z = -4.5 + i * 2.2 + (i % 2) * 0.4;
-      const x = sx * (3.9 + (i % 3) * 0.55);
-      const b = new THREE.Mesh(this.personGeo.body, this.shirtMats[i]);
-      b.position.set(x, 1.0, z);
-      const h = new THREE.Mesh(this.personGeo.head, m.skin);
-      h.position.set(x, 1.72, z);
-      g.add(b, h);
+    // Booth with an attendant, on a little island at the side of the lane.
+    g.add(box(2.4, 0.35, 5.2, sx * 4.6, 0.18, 0, m.platform));
+    const booth = box(1.8, 2.5, 2.2, sx * 4.6, 1.6, 0, m.roofTrim);
+    booth.castShadow = true;
+    g.add(booth, box(2.1, 0.25, 2.5, sx * 4.6, 2.95, 0, m.roof));
+    g.add(box(0.06, 1.0, 1.6, sx * 3.68, 1.9, 0, m.glass));
+    const body = new THREE.Mesh(this.personGeo.body, this.shirtMats[0]);
+    body.position.set(sx * 4.6, 1.4, 0);
+    const head = new THREE.Mesh(this.personGeo.head, m.skin);
+    head.position.set(sx * 4.6, 2.1, 0);
+    g.add(body, head);
+
+    // Raised striped boom barrier.
+    const arm = new THREE.Group();
+    arm.position.set(sx * 3.5, 1.2, 1.6);
+    arm.rotation.z = sx * 1.25;
+    for (let i = 0; i < 6; i++) {
+      const seg = box(0.18, 0.18, 0.8, 0, 0, 0, i % 2 ? m.post : m.stripeRed);
+      seg.rotation.y = Math.PI / 2;
+      seg.position.x = -sx * (0.4 + i * 0.8);
+      arm.add(seg);
     }
+    g.add(arm, box(0.4, 1.2, 0.4, sx * 3.5, 0.6, 1.6, m.frame));
 
     const coin = new THREE.Mesh(this.coinGeo, this.coinMats);
-    coin.position.set(0, 6.6, 0);
+    coin.position.set(0, 7.4, 0);
     coin.scale.setScalar(0.9);
     g.add(coin);
     g.userData.coin = coin;

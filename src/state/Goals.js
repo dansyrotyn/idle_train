@@ -57,9 +57,9 @@ export class Goals {
       case 'merges':
         return ['COMPLETE ', n, g.target === 1 ? ' MERGE' : ' MERGES'];
       case 'gates':
-        return g.target === 1 ? ['BUILD A REWARD LINE', '', ''] : ['BUILD ', n, ' REWARD LINES'];
+        return g.target === 1 ? ['BUILD A REWARD LANE', '', ''] : ['BUILD ', n, ' REWARD LANES'];
       case 'track':
-        return g.target === 1 ? ['UPGRADE THE TRACK', '', ''] : ['UPGRADE TRACK ', n, ' TIMES'];
+        return g.target === 1 ? ['UPGRADE THE ROAD', '', ''] : ['UPGRADE ROAD ', n, ' TIMES'];
       case 'collect':
         return ['COLLECT ', n, ' COINS'];
       case 'carLevel':

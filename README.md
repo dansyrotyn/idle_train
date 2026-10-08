@@ -1,6 +1,6 @@
-# Idle Train
+# Idle Cars
 
-Idle merge game prototype: a metro train running on an elevated loop over a toy city.
+Idle merge game prototype: 90s cars driving an elevated freeway loop over a toy 90s city (beater → sedan → taxi → hot hatch → muscle → JDM → tuned → limo → supercar).
 Same core loop as our ball game (add → merge → reward lines → upgrade track), new fantasy.
 Mobile web, portrait. three.js r186, plain ES modules: no build step and no npm.
 
@@ -47,7 +47,7 @@ upgrade the track or add a reward line for free, and show an FPS counter.
 | `src/state/` | `GameState` (coins, cars, actions, prices), `Goals` (stages), `save.js` (localStorage) |
 | `src/world/TrackPath.js` | Loop geometry: filleted polygon, arc-length sampling, reward-line slots |
 | `src/world/Viaduct.js` | Deck, rails, sleepers, neon strip, pillars (kept out of the streets) |
-| `src/world/Train.js`, `TrainModels.js` | Train movement, add/merge animations, car models and liveries |
+| `src/world/Cars.js`, `CarModels.js` | Car convoy movement, add/merge animations, the 9 car models |
 | `src/world/Gates.js` | Station and neon reward gates |
 | `src/world/City.js`, `Traffic.js` | Procedural city (rebuilt around the track on upgrade), cars with traffic lights, pedestrians |
 | `src/world/Environment.js` | Renderer, lights, sky, fog, clouds, shadow box following the camera |

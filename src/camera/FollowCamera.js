@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { clamp, damp, lerp, smoothstep } from '../utils/math.js';
 
-const DEFAULT = { distance: 36, elevation: 0.52, azOffset: Math.PI + 0.75 };
+const DEFAULT = { distance: 56, elevation: 0.72, azOffset: Math.PI + 0.75 };
 
 // Orbit camera that follows the train. Drag rotates, pinch / wheel zooms.
 // Close up it turns with the train (chase cam); zoomed out it eases toward the

@@ -46,7 +46,8 @@ export const FACADE_CELL = { w: 2.8, h: 3.2 };
 export const FACADE_TILE = { w: FACADE_CELL.w * 4, h: FACADE_CELL.h * 4 };
 
 export const FACADE_STYLES = {
-  brick: { wall: '#b5533f', trim: '#f4e9dc', glassTop: '#a6d8f3', glassBottom: '#4a7aa6', roof: '#7a6a62', kind: 'punched', brick: true },
+  brownstone: { wall: '#7a4b38', trim: '#e9dcc8', glassTop: '#a6c8de', glassBottom: '#3f5f80', roof: '#4e3a33', kind: 'punched', brick: true },
+  brick: { wall: '#a8463a', trim: '#f4e9dc', glassTop: '#a6d8f3', glassBottom: '#4a7aa6', roof: '#7a6a62', kind: 'punched', brick: true },
   beige: { wall: '#ead7b0', trim: '#ffffff', glassTop: '#b0e0f7', glassBottom: '#4f86b3', roof: '#bcae92', kind: 'punched' },
   terracotta: { wall: '#d9804f', trim: '#fde8d4', glassTop: '#a9dcf4', glassBottom: '#45769f', roof: '#9e6a50', kind: 'punched' },
   teal: { wall: '#69bdb3', trim: '#f4fbfa', glassTop: '#c5ecfb', glassBottom: '#4b84ad', roof: '#5a8f88', kind: 'punched' },
@@ -326,24 +327,20 @@ export function sparkleTexture() {
   return sparkle;
 }
 
+// "TOLL" sign for the toll plaza canopy.
 export function signTexture() {
-  const [c, ctx] = makeCanvas(256, 256);
-  ctx.fillStyle = '#2f6fd6';
-  roundRect(ctx, 0, 0, 256, 256, 40);
+  const [c, ctx] = makeCanvas(512, 128);
+  ctx.fillStyle = '#ffd23f';
+  roundRect(ctx, 0, 0, 512, 128, 18);
   ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  roundRect(ctx, 64, 44, 128, 140, 36);
+  ctx.fillStyle = '#1c1f26';
+  roundRect(ctx, 10, 10, 492, 108, 12);
   ctx.fill();
-  ctx.fillStyle = '#2f6fd6';
-  roundRect(ctx, 84, 66, 88, 52, 10);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(96, 150, 12, 0, Math.PI * 2);
-  ctx.arc(160, 150, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(72, 196, 24, 22);
-  ctx.fillRect(160, 196, 24, 22);
+  ctx.fillStyle = '#ffd23f';
+  ctx.font = `84px ${UI_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('TOLL', 256, 70);
   return toTexture(c);
 }
 
@@ -366,7 +363,7 @@ export function posterTextures() {
     ctx.textAlign = 'left';
     ctx.fillText('IDLE', 40, 120);
     ctx.fillStyle = '#ffd34d';
-    ctx.fillText('TRAIN', 40, 200);
+    ctx.fillText('CARS', 40, 200);
     ctx.fillStyle = '#ffffff';
     roundRect(ctx, 300, 70, 170, 110, 40);
     ctx.fill();
@@ -389,7 +386,7 @@ export function posterTextures() {
     }
     ctx.fillStyle = '#ffffff';
     ctx.font = `54px ${UI_FONT}`;
-    ctx.fillText('CITY METRO', 30, 70);
+    ctx.fillText('VIDEO RENTAL', 30, 70);
   });
   make((ctx) => {
     ctx.fillStyle = '#7b3fe4';
@@ -403,8 +400,43 @@ export function posterTextures() {
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.font = `64px ${UI_FONT}`;
-    ctx.fillText('MERGE', 220, 118);
-    ctx.fillText('& RIDE!', 220, 190);
+    ctx.fillText('EAST SIDE', 220, 118);
+    ctx.fillText('DRIVES', 220, 190);
   });
   return posters;
+}
+
+// 90s shop signs: neon lettering on a dark board.
+export const SHOPS = [
+  { name: 'PIZZA', fg: '#ff4b3e', bg: '#fff3e0', awning: 0xd8342b },
+  { name: 'DELI', fg: '#ffd23f', bg: '#1b5e3a', awning: 0x2e7d4f },
+  { name: 'VIDEO', fg: '#2ee6ff', bg: '#1c1440', awning: 0x3949ab },
+  { name: 'ARCADE', fg: '#ff3fa4', bg: '#14102a', awning: 0x7b3fe4 },
+  { name: 'LAUNDRY', fg: '#7fd6ff', bg: '#f4f7fb', awning: 0x1e88e5 },
+  { name: 'RECORDS', fg: '#ffb020', bg: '#22181a', awning: 0x8d3b2a },
+  { name: '24 HR', fg: '#3dff6e', bg: '#101b14', awning: 0x2e7d32 },
+  { name: 'DONUTS', fg: '#ff7ac8', bg: '#fff0f7', awning: 0xec407a },
+  { name: 'BARBER', fg: '#ff4b3e', bg: '#f4f1e6', awning: 0x1e3a8a },
+  { name: 'GROCERY', fg: '#ffffff', bg: '#c62828', awning: 0xf9a825 },
+  { name: 'NOODLES', fg: '#ffe066', bg: '#b71c1c', awning: 0xb71c1c },
+  { name: 'PAWN', fg: '#ffd23f', bg: '#1c1f26', awning: 0x37474f },
+];
+
+export function shopSignTexture(shop) {
+  const [c, ctx] = makeCanvas(512, 128);
+  ctx.fillStyle = shop.bg;
+  ctx.fillRect(0, 0, 512, 128);
+  ctx.strokeStyle = shade(shop.bg, -0.35);
+  ctx.lineWidth = 10;
+  ctx.strokeRect(5, 5, 502, 118);
+  ctx.font = `80px ${UI_FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = shop.fg;
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = shop.fg;
+  ctx.fillText(shop.name, 256, 70);
+  ctx.shadowBlur = 0;
+  ctx.fillText(shop.name, 256, 70);
+  return toTexture(c, { anisotropy: 8 });
 }

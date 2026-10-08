@@ -6,11 +6,11 @@ import { ECONOMY } from './config.js';
 import { Audio } from './audio/Audio.js';
 import { createRenderer, Environment } from './world/Environment.js';
 import { City } from './world/City.js';
-import { Traffic } from './world/Traffic.js';
 import { Viaduct } from './world/Viaduct.js';
 import { Gates } from './world/Gates.js';
-import { Train } from './world/Train.js';
-import { TrainModelFactory, carStyle } from './world/TrainModels.js';
+import { BonusCoin } from './world/BonusCoin.js';
+import { Cars } from './world/Cars.js';
+import { CarModelFactory, carStyle } from './world/CarModels.js';
 import { getTrackPath } from './world/TrackPath.js';
 import { FollowCamera } from './camera/FollowCamera.js';
 import { Effects } from './fx/Effects.js';
@@ -41,18 +41,18 @@ export class Game {
 
     this.env = new Environment(this.scene, this.renderer);
     this.city = new City(this.scene);
-    this.traffic = new Traffic(this.scene);
     this.viaduct = new Viaduct(this.scene);
     this.gates = new Gates(this.scene);
-    this.factory = new TrainModelFactory();
+    this.factory = new CarModelFactory();
     this.ui = new UI(this, root);
     this.fx = new Effects(this.scene, this.camera, this.ui.fxLayer, () => this.ui.coinTarget());
     this.fx.onCoinArrive = () => this.ui.bumpCoins();
-    this.train = new Train(this.scene, this.factory, {
+    this.train = new Cars(this.scene, this.factory, {
       onMergeComplete: (car) => this.mergeFx(car),
       onCarAppear: (car) => this.appearFx(car),
     });
     this.cam = new FollowCamera(this.camera, canvas);
+    this.bonus = new BonusCoin(this.scene, this.camera, canvas, (pos) => this.collectBonus(pos));
 
     this.buildTrack(this.state.trackLevel);
     this.train.rebuild(this.state.cars);
@@ -243,6 +243,20 @@ export class Game {
     this.fx.floatText(_v, `+${formatCompact(value)}`);
   }
 
+  // Tapped bonus coin: 10–30 seconds of income.
+  collectBonus(pos) {
+    const value = Math.max(20, Math.round(this.state.incomeRate() * (10 + Math.random() * 20)));
+    this.state.earn(value);
+    this.audio.play('coinScatter');
+    this.audio.play('coinFly');
+    this.fx.sparkle(pos, { count: 50, color: 0xffe27a, speed: 9, up: 5 });
+    this.fx.coinBurst(pos, 6);
+    for (let i = 0; i < 4; i++) setTimeout(() => this.fx.flyCoin(pos), i * 90);
+    _v.copy(pos).setY(pos.y + 2);
+    this.fx.floatText(_v, `+${formatCompact(value)}`);
+    this.ui.update();
+  }
+
   mergeFx(car) {
     const color = carStyle(car.level).body;
     _v.copy(car.group.position);
@@ -329,7 +343,8 @@ export class Game {
     this.train.update(dt, this.state.trainSpeed);
     this.train.forEachCrossing(this.gatePositions, (car, g, n) => this.onCrossing(car, g, n));
     this.gates.update(dt);
-    this.traffic.update(dt);
+    this.bonus.enabled = this.state.stage > 0; // not during the tutorial stage
+    this.bonus.update(dt, this.path, this.train.headS);
     this.city.update(dt);
     this.cam.update(raw, this.train.headPos, this.train.heading, this.path.center);
     this.env.update(raw, this.camera, this.cam.target, this.cam.distance);

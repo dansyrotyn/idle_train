@@ -1,4 +1,4 @@
-const KEY = 'idle-train-save-v1';
+const KEY = 'idle-cars-save-v1';
 
 let disabled = false;
 
