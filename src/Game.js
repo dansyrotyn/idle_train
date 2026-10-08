@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GameState } from './state/GameState.js';
 import { Goals } from './state/Goals.js';
 import { clearSave, loadGame, saveGame } from './state/save.js';
+import { ECONOMY } from './config.js';
 import { createRenderer, Environment } from './world/Environment.js';
 import { City } from './world/City.js';
 import { Traffic } from './world/Traffic.js';
@@ -22,7 +23,8 @@ export class Game {
   constructor(root) {
     this.root = root;
     this.state = new GameState();
-    loadGame(this.state);
+    const loaded = loadGame(this.state);
+    const lastExit = loaded ? this.state.lastExit : 0;
     this.goals = new Goals(this.state);
     this.timeScale = 1;
     this.busy = false;
@@ -69,9 +71,35 @@ export class Game {
     this.fps = 60;
     this.slowSeconds = 0;
     const save = () => saveGame(this.state);
-    document.addEventListener('visibilitychange', () => document.hidden && save());
-    window.addEventListener('pagehide', save);
+    const leave = () => {
+      this.state.lastExit = Date.now();
+      save();
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) leave();
+      else this.collectOffline(this.state.lastExit);
+    });
+    window.addEventListener('pagehide', leave);
     this.ui.update();
+    this.collectOffline(lastExit);
+  }
+
+  // BallMerge3D OfflineIncomeManager: a share of 1x income/sec for the time away (capped).
+  // Paid straight to the balance, so it doesn't count toward "collect" goals.
+  collectOffline(since) {
+    const s = this.state;
+    const { minSeconds, maxSeconds, efficiency } = ECONOMY.offline;
+    const seconds = (Date.now() - since) / 1000;
+    s.lastExit = 0;
+    if (!since || s.stage === 0 || seconds < minSeconds) return;
+    const reward = Math.floor(s.incomeRate() * Math.min(seconds, maxSeconds) * efficiency);
+    if (reward <= 0) return;
+    this.ui.showOfflineIncome(reward, () => {
+      s.coins += reward;
+      this.fx.flyCoin(this.train.headPos);
+      this.ui.update();
+      saveGame(s);
+    });
   }
 
   start() {
@@ -175,10 +203,7 @@ export class Game {
       this.ui.toast('GOAL COMPLETE!');
       return;
     }
-    // Stage rewards go straight to the balance so they don't count toward "collect" goals.
-    const reward = this.goals.stageReward();
-    this.state.coins += reward;
-    this.ui.showStageComplete(stageBefore + 1, reward);
+    this.ui.showStageComplete(stageBefore + 1);
     this.celebrate();
     saveGame(this.state);
   }
@@ -284,7 +309,7 @@ export class Game {
     const dt = raw * this.timeScale;
     this.state.playTime += dt;
 
-    this.train.update(dt, this.state.track.speed);
+    this.train.update(dt, this.state.trainSpeed);
     this.train.forEachCrossing(this.gatePositions, (car, g, n) => this.onCrossing(car, g, n));
     this.gates.update(dt);
     this.traffic.update(dt);

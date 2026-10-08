@@ -1,7 +1,7 @@
-import { ECONOMY, STAGES } from '../config.js';
+import { LOOPED_STAGES, STAGES } from '../config.js';
 import { formatCompact, niceRound } from '../utils/format.js';
 
-// Stage goals: three per stage. The active goal is stored on the state (with a snapshot
+// Stage goals: 2–4 per stage (BallMerge3D levels), done one after another. The active goal is stored on the state (with a snapshot
 // of the counters at its start) so progress survives reloads.
 export class Goals {
   constructor(state) {
@@ -57,15 +57,15 @@ export class Goals {
       case 'merges':
         return ['COMPLETE ', n, g.target === 1 ? ' MERGE' : ' MERGES'];
       case 'gates':
-        return g.target === 1 ? ['ADD A REWARD LINE', '', ''] : ['ADD ', n, ' REWARD LINES'];
+        return g.target === 1 ? ['BUILD A REWARD LINE', '', ''] : ['BUILD ', n, ' REWARD LINES'];
       case 'track':
-        return ['UPGRADE THE TRACK', '', ''];
+        return g.target === 1 ? ['UPGRADE THE TRACK', '', ''] : ['UPGRADE TRACK ', n, ' TIMES'];
       case 'collect':
         return ['COLLECT ', n, ' COINS'];
       case 'carLevel':
         return ['GET A LEVEL ', n, ' CAR'];
       case 'income':
-        return ['EARN ', n, '/SEC'];
+        return ['REACH ', n, '/S INCOME'];
       default:
         return ['', '', ''];
     }
@@ -82,7 +82,7 @@ export class Goals {
 
   advance() {
     const s = this.state;
-    if (s.goalIndex < 2) {
+    if (s.goalIndex < this.goalCount() - 1) {
       s.goalIndex++;
       this.activate();
       return 'goal';
@@ -93,8 +93,14 @@ export class Goals {
     return 'stage';
   }
 
-  stageReward() {
-    return niceRound(Math.max(100, this.state.incomeRate() * ECONOMY.stageRewardSeconds));
+  stageDefs(stage) {
+    if (stage < STAGES.length) return STAGES[stage];
+    const first = STAGES.length - LOOPED_STAGES;
+    return STAGES[first + ((stage - STAGES.length) % LOOPED_STAGES)];
+  }
+
+  goalCount() {
+    return this.stageDefs(this.state.stage).length;
   }
 
   activate() {
@@ -115,51 +121,18 @@ export class Goals {
 
   definition(stage, index) {
     const s = this.state;
-    let def = STAGES[stage]?.[index];
-    if (!def) def = this.generated(stage, index);
-    def = { ...def };
+    let def = { ...this.stageDefs(stage)[index] };
 
-    // Keep goals achievable: never ask for a reward line or track upgrade that cannot exist.
+    // BallMerge3D GoalInstance.ClampTarget: never ask for something that cannot happen.
+    if (def.type === 'incomePct') def = { ...def, type: 'income', target: niceRound(s.incomeRate() * (1 + def.target / 100)) };
     const canAddGate = !s.isGatesFull() || (!s.isTrackMax() && (s.unlocked.track || def.unlock === 'track'));
     if (def.type === 'gates' && !canAddGate) def = { type: 'collect', target: this.collectTarget() };
-    if (def.type === 'track' && s.isTrackMax()) def = { type: 'income', target: this.incomeTarget() };
-    if (def.type === 'carLevel' && def.target <= s.maxLevel) def.target = s.maxLevel + 1;
-    if (def.type === 'income' && def.target <= s.incomeRate()) def.target = this.incomeTarget();
+    if (def.type === 'track' && s.isTrackMax()) def = { type: 'collect', target: this.collectTarget() };
+    if (def.type === 'income' && def.target <= s.incomeRate()) def.target = niceRound(s.incomeRate() * 1.05 + 1);
     return def;
-  }
-
-  generated(stage, index) {
-    const s = this.state;
-    const k = stage - STAGES.length;
-    const counted = 10 + 2 * Math.max(0, k);
-    const patterns = [
-      ['carLevel', 'merges', 'collect'],
-      ['income', 'buyCars', 'carLevel'],
-      ['upgrade', 'collect', 'merges'],
-    ];
-    let type = patterns[stage % patterns.length][index];
-    if (type === 'upgrade') type = !s.isTrackMax() ? 'track' : !s.isGatesFull() ? 'gates' : 'collect';
-    switch (type) {
-      case 'carLevel':
-        return { type, target: s.maxLevel + 1 };
-      case 'merges':
-      case 'buyCars':
-        return { type, target: counted };
-      case 'income':
-        return { type, target: this.incomeTarget() };
-      case 'track':
-      case 'gates':
-        return { type, target: 1 };
-      default:
-        return { type: 'collect', target: this.collectTarget() };
-    }
   }
 
   collectTarget() {
     return niceRound(Math.max(1000, this.state.incomeRate() * 180));
-  }
-
-  incomeTarget() {
-    return niceRound(this.state.incomeRate() * 1.6 + 10);
   }
 }

@@ -21,14 +21,17 @@ Open http://localhost:5173. To test on a phone on the same Wi‑Fi, open `http:/
 
 ## Gameplay
 
+The economy is ported 1:1 from BallMerge3D (`Assets/_Project/_Data`). All numbers live in `src/config.js`.
+
 | Button | Effect |
 | --- | --- |
-| **Add Car** | Adds a car at level `1 + track level`. The track level caps the train length. |
-| **Merge Train** | Merges two cars of the lowest level that has a pair into one car of the next level (white → red → green → …). |
-| **Add Reward Line** | Adds another neon gate. Every car passing a gate (or the station) earns `10 × 3^(level-1) × 1.5^(track level)` coins. |
-| **Upgrade Track** | Bigger loop (6 levels): faster train, more car and gate slots, ×1.5 income, and higher-level new cars. |
+| **Add Car** | Adds a level-1 car. Price `100 + 45n + 4n²` (n = cars ever bought), soft cap at n = 100, max 250K. |
+| **Merge Train** | Merges two cars of the lowest level that has a pair into one car of the next level (max level 9). Price `150 + 60m + 4m²` (m = merges ever done), max 275K. |
+| **Add Reward Line** | Adds another neon gate: 1K, 3.5K, 14K, 35K, … up to 2M. Every car passing a gate (or the station) earns 20 / 52 / 132 / 320 / 750 / 1.7K / 3.8K / 7.7K / 15.3K coins by level. |
+| **Upgrade Track** | Bigger loop (6 levels, 220K → 6.5M): more car and gate slots. Lap time 8 → 16 s. |
 
-Stages have three goals each. The first stages unlock buttons one by one, with one-time tutorial hints.
+Offline income: 7% of income/sec for up to 1 hour away (at least 30 s; not on stage 1), with a Collect popup.
+Stages are BallMerge3D's 25 levels (2–4 goals each); after them, the last 5 loop. The first stages unlock buttons one by one, with one-time tutorial hints.
 Progress autosaves to `localStorage`. **Settings → Reset progress** wipes it.
 
 **Test menu:** Settings → 🛠 Test menu, or press `` ` `` on desktop.

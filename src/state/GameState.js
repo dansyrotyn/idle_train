@@ -2,7 +2,17 @@ import { ECONOMY, TRACKS } from '../config.js';
 import { Emitter } from '../utils/Emitter.js';
 import { getTrackPath } from '../world/TrackPath.js';
 
-const SAVE_VERSION = 1;
+const SAVE_VERSION = 2; // 2: BallMerge3D economy
+
+// BallMerge3D ProgressivePriceBalance.GetPrice: quadratic up to the soft cap, linear after,
+// capped, rounded to the nearest 5.
+function progressivePrice(c, n) {
+  const q = Math.min(n, c.softCap);
+  let price = c.base + c.step * q + c.quad * q * q;
+  if (n > c.softCap) price += c.linearAfter * (n - c.softCap);
+  price = Math.min(price, c.max);
+  return Math.floor((price + 2) / 5) * 5;
+}
 
 // Pure game model: coins, the train composition, purchases and prices.
 // The 3D world listens to its events; nothing here knows about rendering.
@@ -25,6 +35,7 @@ export class GameState extends Emitter {
     this.unlocked = { add: true, merge: false, gate: false, track: false };
     this.tutorialsSeen = {};
     this.playTime = 0;
+    this.lastExit = 0; // ms timestamp of the last time the game was left, for offline income
   }
 
   get track() {
@@ -40,36 +51,41 @@ export class GameState extends Emitter {
   }
 
   get newCarLevel() {
-    return 1 + this.trackLevel;
+    return 1;
+  }
+
+  get maxCarLevel() {
+    return ECONOMY.carIncome.length;
+  }
+
+  // Train speed that gives the track its lap time.
+  get trainSpeed() {
+    return getTrackPath(this.trackLevel).length / this.track.lapTime;
   }
 
   carValue(level) {
-    return Math.round(
-      ECONOMY.carValueBase *
-        Math.pow(ECONOMY.carValueMult, level - 1) *
-        Math.pow(ECONOMY.trackIncomeMult, this.trackLevel),
-    );
+    const t = ECONOMY.carIncome;
+    return t[Math.min(Math.max(level, 1), t.length) - 1];
   }
 
   // Steady-state average income: every car crosses every reward line once per lap.
   incomeRate() {
     let perLap = 0;
     for (const lvl of this.cars) perLap += this.carValue(lvl);
-    const lapTime = getTrackPath(this.trackLevel).length / this.track.speed;
-    return (perLap * this.gates) / lapTime;
+    return (perLap * this.gates) / this.track.lapTime;
   }
 
   // --- prices -------------------------------------------------------------
 
   carPrice() {
-    return Math.round(ECONOMY.carPriceBase * Math.pow(ECONOMY.carPriceGrowth, this.stats.carsBought));
+    return progressivePrice(ECONOMY.carPrice, this.stats.carsBought);
   }
 
   mergeIndex() {
-    // Lowest level with at least two cars. Cars are sorted, so the pair is adjacent
-    // and merging the first two keeps the order.
+    // Lowest level with at least two cars, below the max level. Cars are sorted, so the
+    // pair is adjacent and merging the first two keeps the order.
     for (let i = this.cars.length - 1; i > 0; i--) {
-      if (this.cars[i] === this.cars[i - 1]) {
+      if (this.cars[i] === this.cars[i - 1] && this.cars[i] < this.maxCarLevel) {
         let j = i - 1;
         while (j > 0 && this.cars[j - 1] === this.cars[i]) j--;
         return j;
@@ -79,13 +95,15 @@ export class GameState extends Emitter {
   }
 
   mergePrice() {
-    const i = this.mergeIndex();
-    if (i < 0) return null;
-    return Math.round(ECONOMY.mergePriceBase * Math.pow(ECONOMY.mergePriceLevelMult, this.cars[i] - 1));
+    if (this.mergeIndex() < 0) return null;
+    return progressivePrice(ECONOMY.mergePrice, this.stats.merges);
   }
 
   gatePrice() {
-    return ECONOMY.gatePrices[this.gates - 1] ?? Infinity;
+    const { gatePrices: p, gateExtraStep, gateMaxPrice } = ECONOMY;
+    const n = this.stats.gatesBought;
+    if (n < p.length) return p[n];
+    return Math.min(p[p.length - 1] + gateExtraStep * (n - p.length + 1), gateMaxPrice);
   }
 
   trackPrice() {
@@ -211,18 +229,19 @@ export class GameState extends Emitter {
     this.trackLevel = Math.min(Math.max(0, num(d.trackLevel, 0) | 0), this.maxTrackLevel);
     if (Array.isArray(d.cars) && d.cars.length) {
       this.cars = d.cars
-        .map((l) => Math.max(1, l | 0))
+        .map((l) => Math.min(Math.max(1, l | 0), this.maxCarLevel))
         .sort((a, b) => b - a)
         .slice(0, this.track.maxCars);
     }
     this.gates = Math.min(Math.max(1, num(d.gates, 1) | 0), this.track.maxGates);
     Object.assign(this.stats, d.stats || {});
     this.stage = Math.max(0, num(d.stage, 0) | 0);
-    this.goalIndex = Math.min(Math.max(0, num(d.goalIndex, 0) | 0), 2);
+    this.goalIndex = Math.min(Math.max(0, num(d.goalIndex, 0) | 0), 3);
     this.goal = d.goal && typeof d.goal === 'object' ? d.goal : null;
     Object.assign(this.unlocked, d.unlocked || {});
     this.tutorialsSeen = d.tutorialsSeen || {};
     this.playTime = num(d.playTime, 0);
+    this.lastExit = num(d.savedAt, 0); // last save ≈ when the game was closed
     return true;
   }
 }

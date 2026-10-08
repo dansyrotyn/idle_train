@@ -116,7 +116,7 @@ export class UI {
     this.set('coins', formatCoins(state.coins));
     this.set('rate', formatRate(state.incomeRate()));
     this.set('stage', String(state.stage + 1));
-    this.set('goalnum', `${state.goalIndex + 1}/3`);
+    this.set('goalnum', `${state.goalIndex + 1}/${goals.goalCount()}`);
 
     const [before, num, after] = goals.describe();
     this.set('goal-text', `${before}${num ? `<b>${num}</b>` : ''}${after}`, true);
@@ -250,13 +250,25 @@ export class UI {
     this.modal = null;
   }
 
-  showStageComplete(stageNumber, reward) {
+  showStageComplete(stageNumber) {
     const m = this.openModal(`
       <div class="ribbon">STAGE ${stageNumber}</div>
       <h2>COMPLETE!</h2>
-      <div class="reward"><span class="coin-icon">${COIN_SVG}</span>+${formatCompact(reward)}</div>
       <button class="mbtn green" data-act="ok">CONTINUE</button>`, 'stage-modal');
     m.querySelector('[data-act="ok"]').addEventListener('click', () => this.closeModal());
+  }
+
+  // BallMerge3D UOfflineIncomePopup: one Collect button, no x2.
+  showOfflineIncome(reward, onCollect) {
+    const m = this.openModal(`
+      <div class="ribbon">WELCOME BACK</div>
+      <h2>OFFLINE INCOME</h2>
+      <div class="reward"><span class="coin-icon">${COIN_SVG}</span>+${formatCompact(reward)}</div>
+      <button class="mbtn green" data-act="ok">COLLECT</button>`, 'stage-modal');
+    m.querySelector('[data-act="ok"]').addEventListener('click', () => {
+      this.closeModal();
+      onCollect();
+    });
   }
 
   openSettings() {
@@ -333,7 +345,7 @@ export class UI {
     );
     const lvl = m.querySelector('[data-id="dbg-level"]');
     const step = (d) => {
-      dbg.carLevel = Math.max(1, Math.min(30, dbg.carLevel + d));
+      dbg.carLevel = Math.max(1, Math.min(this.game.state.maxCarLevel, dbg.carLevel + d));
       lvl.textContent = dbg.carLevel;
     };
     m.querySelector('[data-act="lvl-"]').addEventListener('click', () => step(-1));
