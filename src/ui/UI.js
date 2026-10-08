@@ -69,6 +69,8 @@ export class UI {
       el.addEventListener('click', () => this.onAction(name));
     }
     this.$('gear').addEventListener('click', () => this.openSettings());
+    // Tap sound on every UI button (BallMerge3D SoundsConfig.buttonClickClip).
+    root.addEventListener('click', (e) => e.target.closest('button') && this.game.audio.play('button'), true);
     this.text = new Map(); // last values written, to avoid DOM churn
     this.tutorial = null;
     this.modal = null;
@@ -272,14 +274,27 @@ export class UI {
   }
 
   openSettings() {
+    const { audio } = this.game;
     const m = this.openModal(`
       <button class="close" data-act="close" aria-label="Close">${CLOSE_SVG}</button>
       <h2>SETTINGS</h2>
+      <div class="row">
+        <button class="mbtn ${audio.soundOn ? 'green' : 'gray'}" data-act="sound">SOUND ${audio.soundOn ? 'ON' : 'OFF'}</button>
+        <button class="mbtn ${audio.musicOn ? 'green' : 'gray'}" data-act="music">MUSIC ${audio.musicOn ? 'ON' : 'OFF'}</button>
+      </div>
       <button class="mbtn purple" data-act="debug">🛠 TEST MENU</button>
       <button class="mbtn red" data-act="reset">RESET PROGRESS</button>
       <p class="hint">Drag to rotate · pinch or scroll to zoom · double-tap to reset view</p>`);
     m.querySelector('[data-act="close"]').addEventListener('click', () => this.closeModal());
     m.querySelector('[data-act="debug"]').addEventListener('click', () => this.openDebug());
+    m.querySelector('[data-act="sound"]').addEventListener('click', () => {
+      audio.setSound(!audio.soundOn);
+      this.openSettings();
+    });
+    m.querySelector('[data-act="music"]').addEventListener('click', () => {
+      audio.setMusic(!audio.musicOn);
+      this.openSettings();
+    });
     m.querySelector('[data-act="reset"]').addEventListener('click', () => this.confirmReset());
   }
 

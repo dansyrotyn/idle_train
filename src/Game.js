@@ -3,6 +3,7 @@ import { GameState } from './state/GameState.js';
 import { Goals } from './state/Goals.js';
 import { clearSave, loadGame, saveGame } from './state/save.js';
 import { ECONOMY } from './config.js';
+import { Audio } from './audio/Audio.js';
 import { createRenderer, Environment } from './world/Environment.js';
 import { City } from './world/City.js';
 import { Traffic } from './world/Traffic.js';
@@ -29,6 +30,7 @@ export class Game {
     this.timeScale = 1;
     this.busy = false;
     this.showFps = false;
+    this.audio = new Audio();
 
     const canvas = document.createElement('canvas');
     root.prepend(canvas);
@@ -94,8 +96,12 @@ export class Game {
     if (!since || s.stage === 0 || seconds < minSeconds) return;
     const reward = Math.floor(s.incomeRate() * Math.min(seconds, maxSeconds) * efficiency);
     if (reward <= 0) return;
+    this.audio.play('popup');
     this.ui.showOfflineIncome(reward, () => {
       s.coins += reward;
+      this.audio.play('coinScatter');
+      this.audio.play('coinFly');
+      setTimeout(() => this.audio.play('coinCollect'), 600);
       this.fx.flyCoin(this.train.headPos);
       this.ui.update();
       saveGame(s);
@@ -139,18 +145,26 @@ export class Game {
 
   bindState() {
     const s = this.state;
-    s.on('carAdded', ({ index, level }) => this.train.addCar(index, level));
+    s.on('carAdded', ({ index, level }) => {
+      this.audio.play('carAdd');
+      this.train.addCar(index, level);
+    });
     s.on('merged', ({ index, level }) => {
+      this.audio.play('merge');
       if (!this.train.merge(index, level)) this.train.rebuild(s.cars);
     });
     s.on('gateAdded', ({ index }) => {
+      this.audio.play('gateAdd');
       const it = this.gates.add(index);
       this.gatePositions = this.gates.positions();
       it.group.getWorldPosition(_v);
       this.fx.ring(_v.setY(_v.y + 0.3), { color: 0x7dff6a, size: 7 });
       this.fx.sparkle(_v.setY(_v.y + 3), { count: 50, color: 0x9dff8a, speed: 8 });
     });
-    s.on('trackUpgraded', () => this.trackTransition());
+    s.on('trackUpgraded', () => {
+      this.audio.play('trackUpgrade');
+      this.trackTransition();
+    });
   }
 
   async trackTransition() {
@@ -200,9 +214,11 @@ export class Game {
 
   onGoalResult(res, stageBefore) {
     if (res === 'goal') {
+      this.audio.play('goalComplete');
       this.ui.toast('GOAL COMPLETE!');
       return;
     }
+    this.audio.play('stageComplete');
     this.ui.showStageComplete(stageBefore + 1);
     this.celebrate();
     saveGame(this.state);
@@ -218,6 +234,7 @@ export class Game {
   onCrossing(car, gateIndex, times) {
     const value = this.state.carValue(car.level) * times;
     this.state.earn(value);
+    this.audio.play('reward');
     this.gates.pulse(gateIndex);
     this.gates.coinWorldPosition(gateIndex, _v);
     this.fx.coinBurst(_v, 1);
