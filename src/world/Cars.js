@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { CAR_SPACING, TRACK_HEIGHT } from '../config.js';
 import { easeOutElastic } from '../utils/math.js';
 
-const AXLE = 1.3; // sample distance in front of / behind the car center for heading
+const AXLE = 1.3;
+const LANE = 1.9; // lateral offset of the convoy's lane from the road centerline // sample distance in front of / behind the car center for heading
 const _f = { x: 0, z: 0 };
 const _r = { x: 0, z: 0 };
 
@@ -204,7 +205,10 @@ export class Cars {
     c.s = s;
     const f = this.path.pointAt(s + AXLE, _f);
     const r = this.path.pointAt(s - AXLE, _r);
-    c.group.position.set((f.x + r.x) / 2, TRACK_HEIGHT, (f.z + r.z) / 2);
+    // Right-hand lane: offset to the right of travel (the inside of the loop).
+    const dx = f.x - r.x, dz = f.z - r.z;
+    const k = LANE / (Math.hypot(dx, dz) || 1);
+    c.group.position.set((f.x + r.x) / 2 - dz * k, TRACK_HEIGHT, (f.z + r.z) / 2 + dx * k);
     c.group.rotation.y = Math.atan2(f.x - r.x, f.z - r.z);
     const spin = (c.s - c.prevS) / c.model.wheelR;
     for (const w of c.model.wheels) w.rotation.x += spin;

@@ -107,11 +107,11 @@ export class Gates {
     const coin = group.userData.coin;
 
     // The green "reward line" curtain across the track.
-    const curtain = new THREE.Mesh(new THREE.PlaneGeometry(5.1, 4.9), curtainMat);
+    const curtain = new THREE.Mesh(new THREE.PlaneGeometry(7.9, 4.9), curtainMat);
     curtain.position.y = 2.6;
     group.add(curtain);
-    for (const y of [1.0, 2.4, 3.8]) group.add(box(5.1, 0.07, 0.07, 0, y, 0, laserMat));
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 0.9), curtainMat);
+    for (const y of [1.0, 2.4, 3.8]) group.add(box(7.9, 0.07, 0.07, 0, y, 0, laserMat));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(8.0, 0.9), curtainMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = 0.06;
     group.add(floor);
@@ -129,7 +129,7 @@ export class Gates {
   createGate() {
     const m = this.mats;
     const g = new THREE.Group();
-    for (const x of [-2.85, 2.85]) {
+    for (const x of [-4.1, 4.1]) {
       const post = box(0.55, 5.4, 0.85, x, 2.7, 0, m.frame);
       post.castShadow = true;
       g.add(post);
@@ -138,11 +138,11 @@ export class Gates {
       g.add(box(0.12, 0.5, 0.4, inner, 0.55, 0, m.yellow));
       g.add(box(0.12, 0.5, 0.4, inner, 4.75, 0, m.yellow));
     }
-    const beam = box(6.6, 1.3, 1.05, 0, 6.0, 0, m.frame);
+    const beam = box(9.2, 1.3, 1.05, 0, 6.0, 0, m.frame);
     beam.castShadow = true;
     g.add(beam);
-    g.add(box(6.0, 0.9, 1.1, 0, 6.0, 0, m.frameLight));
-    g.add(box(5.2, 0.1, 0.5, 0, 5.3, 0, m.cyan));
+    g.add(box(8.6, 0.9, 1.1, 0, 6.0, 0, m.frameLight));
+    g.add(box(7.8, 0.1, 0.5, 0, 5.3, 0, m.cyan));
     const coin = new THREE.Mesh(this.coinGeo, this.coinMats);
     coin.position.y = 6.05;
     g.add(coin);
@@ -158,37 +158,37 @@ export class Gates {
     const g = new THREE.Group();
 
     // Canopy over the lane on two pillars, with a TOLL sign on both faces.
-    for (const x of [-3.3, 3.3]) {
+    for (const x of [-4.5, 4.5]) {
       const col = box(0.6, 5.6, 0.6, x, 2.8, 0, m.post);
       col.castShadow = true;
       g.add(col);
     }
-    const roof = box(8.6, 0.6, 4.2, 0, 5.9, 0, m.roof);
+    const roof = box(11.2, 0.6, 4.2, 0, 5.9, 0, m.roof);
     roof.castShadow = true;
-    g.add(roof, box(8.8, 0.18, 4.4, 0, 5.55, 0, m.roofTrim));
+    g.add(roof, box(11.4, 0.18, 4.4, 0, 5.55, 0, m.roofTrim));
     for (const z of [-2.2, 2.2]) {
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 1.05), m.sign);
       sign.position.set(0, 6.0, z + Math.sign(z) * 0.02);
       if (z < 0) sign.rotation.y = Math.PI;
       g.add(sign);
     }
-    g.add(box(8.6, 0.12, 0.12, 0, 5.25, -2.1, m.cyan), box(8.6, 0.12, 0.12, 0, 5.25, 2.1, m.cyan));
+    g.add(box(11.2, 0.12, 0.12, 0, 5.25, -2.1, m.cyan), box(11.2, 0.12, 0.12, 0, 5.25, 2.1, m.cyan));
 
     // Booth with an attendant, on a little island at the side of the lane.
-    g.add(box(2.4, 0.35, 5.2, sx * 4.6, 0.18, 0, m.platform));
-    const booth = box(1.8, 2.5, 2.2, sx * 4.6, 1.6, 0, m.roofTrim);
+    g.add(box(2.4, 0.35, 5.2, sx * 5.9, 0.42, 0, m.platform));
+    const booth = box(1.8, 2.5, 2.2, sx * 5.9, 1.85, 0, m.roofTrim);
     booth.castShadow = true;
-    g.add(booth, box(2.1, 0.25, 2.5, sx * 4.6, 2.95, 0, m.roof));
-    g.add(box(0.06, 1.0, 1.6, sx * 3.68, 1.9, 0, m.glass));
+    g.add(booth, box(2.1, 0.25, 2.5, sx * 5.9, 3.2, 0, m.roof));
+    g.add(box(0.06, 1.0, 1.6, sx * 4.98, 2.15, 0, m.glass));
     const body = new THREE.Mesh(this.personGeo.body, this.shirtMats[0]);
-    body.position.set(sx * 4.6, 1.4, 0);
+    body.position.set(sx * 5.9, 1.65, 0);
     const head = new THREE.Mesh(this.personGeo.head, m.skin);
-    head.position.set(sx * 4.6, 2.1, 0);
+    head.position.set(sx * 5.9, 2.35, 0);
     g.add(body, head);
 
     // Raised striped boom barrier.
     const arm = new THREE.Group();
-    arm.position.set(sx * 3.5, 1.2, 1.6);
+    arm.position.set(sx * 4.7, 1.2, 1.6);
     arm.rotation.z = sx * 1.25;
     for (let i = 0; i < 6; i++) {
       const seg = box(0.18, 0.18, 0.8, 0, 0, 0, i % 2 ? m.post : m.stripeRed);
@@ -196,7 +196,7 @@ export class Gates {
       seg.position.x = -sx * (0.4 + i * 0.8);
       arm.add(seg);
     }
-    g.add(arm, box(0.4, 1.2, 0.4, sx * 3.5, 0.6, 1.6, m.frame));
+    g.add(arm, box(0.4, 1.2, 0.4, sx * 4.7, 0.6, 1.6, m.frame));
 
     const coin = new THREE.Mesh(this.coinGeo, this.coinMats);
     coin.position.set(0, 7.4, 0);
@@ -210,13 +210,13 @@ export class Gates {
   createIconModel() {
     const g = this.createGate();
     const curtain = new THREE.Mesh(
-      new THREE.PlaneGeometry(5.1, 4.9),
+      new THREE.PlaneGeometry(7.9, 4.9),
       new THREE.MeshBasicMaterial({ color: 0x6dff5a, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
     );
     curtain.position.y = 2.6;
     g.add(curtain);
-    for (const y of [1.0, 2.4, 3.8]) g.add(box(5.1, 0.12, 0.12, 0, y, 0, this.mats.edge));
-    g.add(box(6.6, 0.8, 2.6, 0, -0.4, 0, this.mats.platform));
+    for (const y of [1.0, 2.4, 3.8]) g.add(box(7.9, 0.12, 0.12, 0, y, 0, this.mats.edge));
+    g.add(box(9.4, 0.8, 2.6, 0, -0.4, 0, this.mats.platform));
     return g;
   }
 

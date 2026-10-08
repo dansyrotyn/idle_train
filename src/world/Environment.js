@@ -104,8 +104,8 @@ export class Environment {
         cloud.add(m);
       }
       const a = rng.float(0, Math.PI * 2);
-      const r = rng.float(520, 820);
-      cloud.position.set(Math.cos(a) * r, rng.float(140, 260), Math.sin(a) * r);
+      const r = rng.float(380, 720);
+      cloud.position.set(Math.cos(a) * r, rng.float(60, 120), Math.sin(a) * r);
       cloud.userData.speed = rng.float(1.5, 4);
       group.add(cloud);
     }

@@ -12,7 +12,7 @@ import { BonusCoin } from './world/BonusCoin.js';
 import { Cars } from './world/Cars.js';
 import { CarModelFactory, carStyle } from './world/CarModels.js';
 import { getTrackPath } from './world/TrackPath.js';
-import { FollowCamera } from './camera/FollowCamera.js';
+import { FollowCamera, VIEW } from './camera/FollowCamera.js';
 import { Effects } from './fx/Effects.js';
 import { UI } from './ui/UI.js';
 import { IconRenderer } from './ui/IconRenderer.js';
@@ -37,7 +37,7 @@ export class Game {
     this.renderer = createRenderer(canvas);
     this.maxPixelRatio = this.renderer.getPixelRatio();
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(50, 1, 0.3, 2500);
+    this.camera = new THREE.PerspectiveCamera(VIEW.fov, 1, 0.5, 2500);
 
     this.env = new Environment(this.scene, this.renderer);
     this.city = new City(this.scene);
@@ -122,11 +122,12 @@ export class Game {
   buildTrack(level) {
     const path = getTrackPath(level);
     this.path = path;
-    this.viaduct.build(path);
+    const plan = this.city.plan(path, level);
+    this.viaduct.build(path, plan.gapAt);
     this.gates.build(path, this.state.gates);
-    this.city.buildDynamic(path, this.viaduct.pillars, this.gates.exclusions());
+    this.city.buildDynamic(path, plan, this.gates.exclusions());
     this.train.setPath(path);
-    this.cam.setTrackSize(path.radius);
+    this.cam.setTrack(path, (x, z) => this.city.heightAt(x, z));
     this.gatePositions = this.gates.positions();
   }
 
@@ -346,7 +347,7 @@ export class Game {
     this.bonus.enabled = this.state.stage > 0; // not during the tutorial stage
     this.bonus.update(dt, this.path, this.train.headS);
     this.city.update(dt);
-    this.cam.update(raw, this.train.headPos, this.train.heading, this.path.center);
+    this.cam.update(raw, this.train.headPos);
     this.env.update(raw, this.camera, this.cam.target, this.cam.distance);
     this.fx.update(raw);
 

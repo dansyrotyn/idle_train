@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TRACK_HEIGHT as H } from '../config.js';
 import { pathFrames, sweepProfile } from './sweep.js';
+import { asphaltTexture, sidewalkTexture } from './city/atlas.js';
 
 // Deck cross-section (u = right, v = up from the deck top), counter-clockwise.
 const DECK = [
@@ -10,76 +10,94 @@ const DECK = [
 ];
 export const DECK_HALF_WIDTH = 3.0;
 
-const _m = new THREE.Matrix4();
-const _q = new THREE.Quaternion();
-const _p = new THREE.Vector3();
-const _s = new THREE.Vector3(1, 1, 1);
-const _up = new THREE.Vector3(0, 1, 0);
 
 // The player's road loop: a ground-level city boulevard.
 export class Viaduct {
   constructor(scene) {
     this.group = new THREE.Group();
     scene.add(this.group);
+    const walkTex = sidewalkTexture();
+    const asphalt = asphaltTexture();
     this.mats = {
-      concrete: new THREE.MeshLambertMaterial({ color: 0xcfc8bb, side: THREE.DoubleSide }), // sidewalk
-      bed: new THREE.MeshLambertMaterial({ color: 0x3a3c44 }), // asphalt
+      concrete: new THREE.MeshLambertMaterial({ color: 0xffffff, map: walkTex }), // sidewalk
+      bed: new THREE.MeshLambertMaterial({ color: 0xa8a8ac, map: asphalt }), // asphalt
       rail: new THREE.MeshBasicMaterial({ color: 0xf4f1e6 }), // edge lines
-      sleeper: new THREE.MeshBasicMaterial({ color: 0xffd23f }), // center dashes
+      sleeper: new THREE.MeshBasicMaterial({ color: 0xffd23f }), // center line
       neon: new THREE.MeshBasicMaterial({ color: 0xffb020 }), // reflector strip
       pillar: new THREE.MeshLambertMaterial({ color: 0xd2cdc4 }),
+      cap: new THREE.MeshLambertMaterial({ color: 0xd8d2c6 }),
     };
-    this.pillars = []; // world {x, z} of every pillar, for the city to keep clear
+    this.pillars = [];
   }
 
-  // Ground-level boulevard over the city streets: asphalt, curbs + sidewalk on both sides,
-  // white edge lines and a yellow double center line (the corners cut through block corners).
-  build(path) {
+  // Ground-level boulevard: asphalt, curbs and wide sidewalks on both sides (the outer one
+  // opens where city streets join), white edge lines and a yellow double center line.
+  // gapAt(x, z): true where a side street crosses the outer sidewalk.
+  build(path, gapAt = null) {
     this.clear();
     const frames = pathFrames(path, 0.6);
-    const flat = (u0, u1, v, mat) =>
-      new THREE.Mesh(sweepProfile(frames, [[u1, v], [u0, v]], { profileClosed: false }), mat);
+    const loop = [...frames, frames[0]]; // open copy, so tiled textures have no seam
+    const flat = (u0, u1, v, mat, uvScale = 1) =>
+      new THREE.Mesh(sweepProfile(loop, [[u1, v], [u0, v]], { closed: false, profileClosed: false, uvScale }), mat);
 
-    const bed = flat(-4.2, 4.2, 0.0, this.mats.bed);
+    const bed = flat(-4.2, 4.2, 0.0, this.mats.bed, 1 / 8);
     bed.receiveShadow = true;
-    const walks = [
-      sweepProfile(frames, [[7, -0.4], [7, 0.25], [4.2, 0.25], [4.2, -0.05]], { profileClosed: false }),
-      sweepProfile(frames, [[-4.2, -0.05], [-4.2, 0.25], [-7, 0.25], [-7, -0.4]], { profileClosed: false }),
-    ];
+    const INNER = [[7.4, -0.4], [7.4, 0.25], [4.2, 0.25], [4.2, -0.05]];
+    const OUTER = [[-4.2, -0.05], [-4.2, 0.25], [-7.4, 0.25], [-7.4, -0.4]];
+    const walks = [sweepProfile(loop, INNER, { closed: false, profileClosed: false, uvScale: 0.25 })];
+    const lines = [sweepProfile(frames, [[3.7, 0.012], [3.5, 0.012]], { profileClosed: false })];
+    const caps = [];
+    for (const run of this.runs(frames, gapAt)) {
+      walks.push(sweepProfile(run, OUTER, { closed: false, profileClosed: false, uvScale: 0.25 }));
+      lines.push(sweepProfile(run, [[-3.5, 0.012], [-3.7, 0.012]], { closed: false, profileClosed: false }));
+      if (run.length < frames.length) caps.push(this.cap(run[0], -1), this.cap(run[run.length - 1], 1));
+    }
     const walk = new THREE.Mesh(mergeGeometries(walks), this.mats.concrete);
     walk.receiveShadow = true;
-    const lines = new THREE.Mesh(
-      mergeGeometries([-3.6, 3.6].map((c) => sweepProfile(frames, [[c + 0.1, 0.012], [c - 0.1, 0.012]], { profileClosed: false }))),
-      this.mats.rail,
-    );
+    const edge = new THREE.Mesh(mergeGeometries(lines), this.mats.rail);
     const center = new THREE.Mesh(
       mergeGeometries([-0.18, 0.18].map((c) => sweepProfile(frames, [[c + 0.08, 0.014], [c - 0.08, 0.014]], { profileClosed: false }))),
       this.mats.sleeper,
     );
-    this.group.add(bed, walk, lines, center);
-    this.group.add(this.buildSleepers(path));
+    this.group.add(bed, walk, edge, center);
+    if (caps.length) {
+      const capMesh = new THREE.Mesh(mergeGeometries(caps), this.mats.cap);
+      capMesh.receiveShadow = true;
+      this.group.add(capMesh);
+    }
   }
 
-  // White lane dashes between the two lanes of each direction.
-  buildSleepers(path) {
-    const step = 4;
-    const n = Math.floor(path.length / step);
-    const geo = new THREE.BoxGeometry(0.14, 0.02, 1.8);
-    const mesh = new THREE.InstancedMesh(geo, this.mats.rail, n * 2);
-    const p = { x: 0, z: 0 };
-    const t = { x: 0, z: 0 };
-    for (let i = 0; i < n; i++) {
-      const s = (i * path.length) / n;
-      path.pointAt(s, p);
-      path.tangentAt(s, t);
-      _q.setFromAxisAngle(_up, Math.atan2(t.x, t.z));
-      for (const [k, side] of [[0, 1.9], [1, -1.9]]) {
-        _m.compose(_p.set(p.x - t.z * side, H + 0.014, p.z + t.x * side), _q, _s);
-        mesh.setMatrixAt(i * 2 + k, _m);
+  // Consecutive frames whose outer sidewalk isn't cut by a side street (open lists).
+  runs(frames, gapAt) {
+    if (!gapAt) return [[...frames, frames[0]]];
+    const ok = frames.map((f) => !gapAt(f.x - f.rx * 5.8, f.z - f.rz * 5.8) && !gapAt(f.x - f.rx * 4.4, f.z - f.rz * 4.4) && !gapAt(f.x - f.rx * 7.2, f.z - f.rz * 7.2));
+    const n = frames.length;
+    if (ok.every(Boolean)) return [[...frames, frames[0]]];
+    const start = ok.findIndex((v, i) => !v && ok[(i + 1) % n]);
+    const out = [];
+    let run = null;
+    for (let k = 1; k <= n; k++) {
+      const i = (start + k) % n;
+      if (ok[i]) (run ??= []).push(frames[i]);
+      else if (run) {
+        if (run.length > 1) out.push(run);
+        run = null;
       }
     }
-    mesh.receiveShadow = true;
-    return mesh;
+    if (run && run.length > 1) out.push(run);
+    return out;
+  }
+
+  // End face of an outer sidewalk run (dir -1 at the start, +1 at the end).
+  cap(f, dir) {
+    const g = new THREE.BufferGeometry();
+    const P = (u, v) => [f.x + f.rx * u, f.y + v, f.z + f.rz * u];
+    const pts = dir > 0 ? [P(-4.2, -0.05), P(-7.4, -0.4), P(-7.4, 0.25), P(-4.2, 0.25)] : [P(-7.4, -0.4), P(-4.2, -0.05), P(-4.2, 0.25), P(-7.4, 0.25)];
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts.flat(), 3));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.computeVertexNormals();
+    g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 0.8, 0, 0.8, 0.1, 0, 0.1], 2));
+    return g;
   }
 
   // A curved piece of track for the HUD button icon.

@@ -1,573 +1,628 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RNG } from '../utils/rng.js';
-import { TRACK_HEIGHT } from '../config.js';
-import { Frontage } from './Frontage.js';
-import { SHOPS, shopSignTexture } from './textures.js';
+import { clamp } from '../utils/math.js';
+import { TRACKS, TRACK_HEIGHT } from '../config.js';
+import { Builder } from './city/Builder.js';
+import { getAtlas, skylineTexture, skylineGlassTexture, skylineDecoTexture, asphaltTexture, sidewalkTexture, waterTexture, grassTexture } from './city/atlas.js';
+import { planCity, GRID, ROAD, FRONT, LOOP_FRONT, ROAD_Y, SLAB_Y } from './city/layout.js';
+import { buildBuilding, farBox, GROUND } from './city/buildings.js';
+import * as P from './city/props.js';
+import { buildBackdrop } from './city/backdrop.js';
+import { Life } from './city/life.js';
 
-// A hand-built 90s neighbourhood around the player's road loop (no street grid):
-// row 1 — walk-ups, brownstones, corner stores and an old hotel right on the loop's sidewalks,
-// rows 2–4 — taller brick and stone blocks behind them, then a hazy skyline,
-// the river with a suspension bridge and an elevated subway line.
-// Inside the loop: a diner island (small loops) or a park with a basketball court.
+// A 90s city around the player's loop, rebuilt for every loop size: a street grid of brick
+// walk-ups, corner stores, brownstones and specials (theater, hotel, firehouse) with street
+// furniture, traffic and pedestrians; an elevated train, the waterfront, a stone suspension
+// bridge, harbour cranes and the downtown skyline to the north. The loop's island holds a
+// chrome diner (small loops) or a park.
 
-const SLAB_H = 0.3;
-const FLOOR_H = 3.0;
+const MAX_SLOTS = Math.max(...TRACKS.map((t) => t.maxGates));
+const CHUNK = 120;
 const WALK_Y = TRACK_HEIGHT + 0.25; // loop sidewalk top
-const ROAD_EDGE = 7.2; // loop center → building front
-const EL_Z = -125;
-const RIVER = { z0: -215, z1: -175 };
+const ISLAND_Y = 0.5;
+const TILE4 = { tw: 4, th: 4 };
+const MARK_Y = ROAD_Y + 0.012;
+const MARK = 0xf0ede4;
+const TREE_COLORS = [0x5cbf3a, 0x4caf50, 0x7ccf3f, 0x3f9e3a, 0x6aa84f, 0x8bc34a];
+const FAR_TINTS = [[[0.86, 0.62, 0.52], 3], [[0.92, 0.85, 0.74], 3], [[0.8, 0.8, 0.82], 2], [[0.95, 0.92, 0.86], 2], [[0.72, 0.5, 0.42], 1]];
+const ROOFS = [0x5d5a57, 0x6b6560, 0x4f4d4c, 0x7a716a];
 
-const BRICK = [0xa4523a, 0x8f4430, 0xb5654a, 0x9a5a44, 0x7f3b2c];
-const STONE = [0x7a4b38, 0x6b3f30, 0x86553f]; // brownstone
-const PLASTER = [0xe3d3b5, 0xd9c4a0, 0xcfd8dc, 0xe8c9a9, 0xb9cfc4];
-const TRIM = 0xf1ead9;
-const GLASS = [0x46658a, 0x557aa3, 0x3b5675];
-const LIT = 0xffd98a;
-const TREE_COLORS = [0x5cbf3a, 0x4caf50, 0x7ccf3f, 0x3f9e3a];
-const SIGN_EXTRA = [{ name: 'HOTEL', fg: '#ff3b3b', bg: '#1c1f26' }, { name: 'DINER', fg: '#e23b5a', bg: '#fff3e0' }];
-const HOTEL_SIGN = SHOPS.length;
-const DINER_SIGN = SHOPS.length + 1;
-
-const _c = new THREE.Color();
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
+const _p = new THREE.Vector3();
+const _s = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
-const _one = new THREE.Vector3(1, 1, 1);
+const _c = new THREE.Color();
 
-function paint(g, color) {
-  if (g.index) g = g.toNonIndexed();
-  _c.set(color);
-  const n = g.attributes.position.count;
-  const arr = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    arr[i * 3] = _c.r;
-    arr[i * 3 + 1] = _c.g;
-    arr[i * 3 + 2] = _c.b;
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  g.deleteAttribute('uv');
-  return g;
-}
-
-// Collects colored geometry in a local frame, then places it in the world.
-class Kit {
-  constructor() {
-    this.geos = [];
-    this.signs = new Map(); // sign index → plane geometries
-  }
-
-  box(w, h, d, x, y, z, color) {
-    this.geos.push(paint(new THREE.BoxGeometry(w, h, d).translate(x, y, z), color));
-  }
-
-  geo(g, color) {
-    this.geos.push(paint(g, color));
-  }
-
-  sign(idx, w, h, x, y, z, ry = 0) {
-    const g = new THREE.PlaneGeometry(w, h).rotateY(ry).translate(x, y, z);
-    if (!this.signs.has(idx)) this.signs.set(idx, []);
-    this.signs.get(idx).push(g);
-  }
-
-  // Moves everything collected so far by (x, z, ry) into the target kit.
-  placeInto(target, x, z, ry) {
-    _m.compose(new THREE.Vector3(x, 0, z), _q.setFromAxisAngle(_up, ry), _one);
-    for (const g of this.geos) target.geos.push(g.applyMatrix4(_m));
-    for (const [k, list] of this.signs) {
-      if (!target.signs.has(k)) target.signs.set(k, []);
-      for (const g of list) target.signs.get(k).push(g.applyMatrix4(_m));
+// Runs of a 0.5-unit sampled test along [a0, a1].
+function runs(a0, a1, test, step = 0.5) {
+  const out = [];
+  let start = null;
+  for (let a = a0; ; a += step) {
+    const end = Math.min(a + step, a1);
+    const ok = a < a1 - 1e-6 && test((a + end) / 2);
+    if (ok && start === null) start = a;
+    if (!ok && start !== null) {
+      out.push([start, Math.min(a, a1)]);
+      start = null;
     }
-    this.geos = [];
-    this.signs = new Map();
+    if (a >= a1 - 1e-6) break;
   }
+  return out;
 }
-
-// ---------------------------------------------------------------------------------------
-// Building prefabs. Local frame: front wall at z = 0 facing +z, body in z ∈ [-d, 0].
-// ---------------------------------------------------------------------------------------
-
-function windows(k, rng, { w, d, floors, from = 1, wall, lit = 0.12, arch = false, cheap = false }) {
-  const cols = Math.max(1, Math.floor((w - 0.8) / 2.1));
-  const sideCols = Math.max(1, Math.floor((d - 1.2) / 2.4));
-  const glass = rng.pick(GLASS);
-  for (let f = from; f < floors; f++) {
-    const y = SLAB_H + f * FLOOR_H + 1.45;
-    for (let c = 0; c < cols; c++) {
-      const x = -w / 2 + (w / cols) * (c + 0.5);
-      k.box(1.0, 1.55, 0.1, x, y, 0.03, rng.chance(lit) ? LIT : glass);
-      if (cheap) continue;
-      k.box(1.3, 0.14, 0.28, x, y - 0.86, 0.08, TRIM); // sill
-      k.box(1.25, 0.2, 0.16, x, y + 0.88, 0.05, arch ? wall : TRIM); // lintel
-    }
-    for (const sx of cheap ? [] : [-1, 1]) {
-      for (let c = 0; c < sideCols; c++) {
-        const z = -0.9 - ((d - 1.4) / sideCols) * (c + 0.5);
-        k.box(0.1, 1.55, 1.0, sx * (w / 2 + 0.03), y, z, rng.chance(lit) ? LIT : glass);
-        k.box(0.26, 0.14, 1.3, sx * (w / 2 + 0.08), y - 0.86, z, TRIM);
-      }
-    }
-  }
-}
-
-function cornice(k, w, d, top, color) {
-  k.box(w + 0.5, 0.35, d + 0.5, 0, top + 0.17, -d / 2, color);
-  k.box(w + 0.25, 0.25, d + 0.25, 0, top - 0.15, -d / 2, color);
-}
-
-function waterTower(k, x, z, top) {
-  for (const [ox, oz] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) k.box(0.14, 2.2, 0.14, x + ox, top + 1.1, z + oz, 0x3a3236);
-  k.box(1.9, 0.12, 1.9, x, top + 2.2, z, 0x3a3236);
-  k.geo(new THREE.CylinderGeometry(1.1, 1.1, 2.2, 12).translate(x, top + 3.35, z), 0x8b5e3c);
-  for (const yy of [2.7, 3.4, 4.1]) k.geo(new THREE.CylinderGeometry(1.14, 1.14, 0.08, 12).translate(x, top + yy, z), 0x3a3236);
-  k.geo(new THREE.ConeGeometry(1.25, 0.9, 12).translate(x, top + 4.9, z), 0x5d4030);
-}
-
-function roofJunk(k, rng, w, d, top) {
-  for (let i = rng.int(1, 3); i > 0; i--) k.box(1.2, 0.8, 1.0, rng.float(-w / 2 + 1, w / 2 - 1), top + 0.4, -rng.float(1, d - 1), 0xc9ced6);
-  if (rng.chance(0.5)) k.box(1.4, 1.6, 1.4, rng.float(-w / 2 + 1, w / 2 - 1), top + 0.8, -rng.float(1.2, d - 1.2), 0x8a8f99);
-}
-
-function storefront(k, rng, w, shopIdx) {
-  const y = SLAB_H;
-  const shop = SHOPS[shopIdx];
-  k.box(w - 0.4, 0.5, 0.25, 0, y + 0.25, 0.1, 0x3a3236);
-  k.box(w - 0.6, 1.9, 0.12, 0, y + 1.45, 0.06, rng.chance(0.5) ? 0x6f8fae : LIT);
-  const door = rng.chance(0.5) ? -w / 2 + 1.1 : w / 2 - 1.1;
-  k.box(1.0, 2.2, 0.16, door, y + 1.1, 0.12, 0x6b3f22);
-  k.box(w - 0.2, 0.2, 0.3, 0, y + 2.55, 0.12, 0x3a3236);
-  // Striped awning, then the sign board above it.
-  const stripes = Math.max(4, Math.round((w - 1) / 0.6));
-  const sw = (w - 1) / stripes;
-  for (let i = 0; i < stripes; i++) {
-    const g = new THREE.BoxGeometry(sw, 0.08, 1.4).rotateX(0.35).translate(-w / 2 + 0.5 + sw * (i + 0.5), y + 2.85, 0.7);
-    k.geo(g, i % 2 ? 0xffffff : shop.awning);
-  }
-  const bw = Math.min(w - 0.6, 7);
-  k.box(bw + 0.3, 1.1, 0.2, 0, y + 3.7, 0.1, 0x1c1f26);
-  k.sign(shopIdx, bw, 0.9, 0, y + 3.7, 0.22);
-}
-
-function fireEscape(k, w, floors, side) {
-  const col = 0x24262b;
-  const u = side * (w / 2 - 2.0);
-  for (let f = 1; f < floors; f++) {
-    const y = SLAB_H + f * FLOOR_H + 0.05;
-    k.box(3.0, 0.08, 1.1, u, y, 0.6, col);
-    k.box(3.0, 0.06, 0.06, u, y + 0.8, 1.13, col);
-    for (const e of [-1.47, 0, 1.47]) k.box(0.05, 0.8, 0.05, u + e, y + 0.4, 1.13, col);
-    if (f < floors - 1) {
-      const dir = f % 2 ? 1 : -1;
-      k.geo(new THREE.BoxGeometry(0.5, Math.hypot(2.0, FLOOR_H), 0.06).rotateZ(dir * Math.atan2(2.0, FLOOR_H)).translate(u, y + FLOOR_H / 2, 0.85), col);
-    }
-  }
-}
-
-// Brick walk-up: shop on the ground floor, windows, cornice, fire escape, water tower.
-function walkup(k, rng, w, d) {
-  const floors = rng.int(3, 5);
-  const wall = rng.pick(BRICK);
-  const top = SLAB_H + floors * FLOOR_H;
-  k.box(w, top - SLAB_H, d, 0, SLAB_H + (top - SLAB_H) / 2, -d / 2, wall);
-  k.box(w + 0.04, 0.2, d + 0.04, 0, SLAB_H + FLOOR_H, -d / 2, TRIM);
-  windows(k, rng, { w, d, floors, wall, arch: rng.chance(0.5) });
-  storefront(k, rng, w, rng.int(0, SHOPS.length - 1));
-  cornice(k, w, d, top, rng.chance(0.6) ? TRIM : 0x5d4a3f);
-  if (w > 7 && rng.chance(0.7)) fireEscape(k, w, floors, rng.chance(0.5) ? 1 : -1);
-  if (rng.chance(0.55)) waterTower(k, rng.float(-w / 2 + 1.5, w / 2 - 1.5), -d * rng.float(0.3, 0.7), top + 0.35);
-  else roofJunk(k, rng, w, d, top + 0.35);
-}
-
-// Brownstone row house: stoop, tall windows, heavy dark cornice.
-function brownstone(k, rng, w, d) {
-  const floors = rng.int(3, 4);
-  const wall = rng.pick(STONE);
-  const top = SLAB_H + floors * FLOOR_H + 0.8;
-  k.box(w, top - SLAB_H, d, 0, SLAB_H + (top - SLAB_H) / 2, -d / 2, wall);
-  k.box(w + 0.04, 1.0, d + 0.04, 0, SLAB_H + 0.5, -d / 2, 0x5a3a2c); // basement
-  windows(k, rng, { w, d, floors, from: 0, wall, lit: 0.08 });
-  const sx = rng.chance(0.5) ? -w / 2 + 1.4 : w / 2 - 1.4;
-  for (let i = 0; i < 5; i++) k.box(1.8, 0.3, 0.45, sx, SLAB_H + 0.15 + i * 0.3, 2.0 - i * 0.42, 0x8a6a58);
-  k.box(1.9, 0.12, 1.0, sx, SLAB_H + 1.55, 0.45, 0x8a6a58);
-  for (const e of [-0.95, 0.95]) k.geo(new THREE.BoxGeometry(0.06, 0.06, 2.6).rotateX(0.48).translate(sx + e, SLAB_H + 1.6, 1.2), 0x1c1f26);
-  k.box(1.1, 2.3, 0.14, sx, SLAB_H + 2.7, 0.04, 0x3d2418);
-  cornice(k, w, d, top, 0x3d2a22);
-  k.box(w + 0.6, 0.5, 0.6, 0, top - 0.2, 0.05, 0x3d2a22);
-  if (rng.chance(0.25)) waterTower(k, 0, -d / 2, top + 0.35);
-  else roofJunk(k, rng, w, d, top + 0.35);
-}
-
-// Corner convenience store: one or two floors, colored stripes, big lit windows.
-function cornerStore(k, rng, w, d) {
-  const two = rng.chance(0.5);
-  const wall = rng.pick(PLASTER);
-  const top = SLAB_H + (two ? 2 : 1) * FLOOR_H + 0.6;
-  k.box(w, top - SLAB_H, d, 0, SLAB_H + (top - SLAB_H) / 2, -d / 2, wall);
-  const [a, b, c] = rng.pick([[0xe23b2a, 0xffffff, 0x2e8b57], [0xf28c28, 0xffffff, 0xd8342b], [0x1e5fbf, 0xffd23f, 0x1e5fbf]]);
-  const by = SLAB_H + FLOOR_H - 0.1;
-  k.box(w + 0.1, 0.3, d + 0.1, 0, by, -d / 2, a);
-  k.box(w + 0.1, 0.2, d + 0.1, 0, by + 0.25, -d / 2, b);
-  k.box(w + 0.1, 0.3, d + 0.1, 0, by + 0.5, -d / 2, c);
-  k.box(w - 0.8, 2.2, 0.12, 0, SLAB_H + 1.4, 0.06, LIT);
-  for (let x = -w / 2 + 1.5; x < w / 2 - 1; x += 1.6) k.box(0.1, 2.2, 0.16, x, SLAB_H + 1.4, 0.08, 0xe9e4d8);
-  k.box(1.1, 2.3, 0.16, w / 2 - 1.2, SLAB_H + 1.15, 0.1, 0xd0d6dc);
-  k.box(w - 0.4, 0.5, 0.25, 0, SLAB_H + 0.25, 0.12, 0x3a3236);
-  const idx = rng.pick([6, 9, 7, 0]); // 24 HR, GROCERY, DONUTS, PIZZA
-  const sw = Math.min(w - 1, 6);
-  k.box(sw + 0.3, 1.1, 0.2, 0, top + 0.6, -0.2, 0x1c1f26);
-  for (const s of [-1, 1]) k.box(0.1, 0.6, 0.1, s * sw / 3, top + 0.1, -0.2, 0x1c1f26);
-  k.sign(idx, sw, 0.9, 0, top + 0.6, -0.08);
-  if (two) windows(k, rng, { w, d, floors: 2, wall });
-  roofJunk(k, rng, w, d, top);
-}
-
-// Old hotel: taller, with a vertical neon HOTEL blade sign.
-function hotel(k, rng, w, d) {
-  const floors = rng.int(6, 8);
-  const wall = rng.pick([...BRICK, 0xc9b38a]);
-  const top = SLAB_H + floors * FLOOR_H;
-  k.box(w, top - SLAB_H, d, 0, SLAB_H + (top - SLAB_H) / 2, -d / 2, wall);
-  windows(k, rng, { w, d, floors, wall, lit: 0.2 });
-  storefront(k, rng, w, rng.int(0, SHOPS.length - 1));
-  cornice(k, w, d, top, TRIM);
-  const sx = w / 2 - 0.6;
-  k.box(0.25, 6.6, 1.6, sx, top - 4.5, 0.95, 0x1c1f26);
-  for (const s of [-1, 1]) {
-    const g = new THREE.PlaneGeometry(6.2, 1.35).rotateZ(Math.PI / 2).rotateY((s * Math.PI) / 2).translate(sx + s * 0.14, top - 4.5, 0.95);
-    if (!k.signs.has(HOTEL_SIGN)) k.signs.set(HOTEL_SIGN, []);
-    k.signs.get(HOTEL_SIGN).push(g);
-  }
-  waterTower(k, -w / 4, -d / 2, top + 0.35);
-}
-
-// Back rows: plain taller brick/stone blocks with window grids and roof junk.
-function block(k, rng, w, d, floors, cheap) {
-  const wall = rng.chance(0.65) ? rng.pick(BRICK) : rng.pick(PLASTER);
-  const top = SLAB_H + floors * FLOOR_H;
-  k.box(w, top - SLAB_H, d, 0, SLAB_H + (top - SLAB_H) / 2, -d / 2, wall);
-  windows(k, rng, { w, d, floors, from: 0, wall, lit: 0.1, cheap });
-  cornice(k, w, d, top, rng.chance(0.5) ? TRIM : 0x5d4a3f);
-  if (cheap) return;
-  if (rng.chance(0.5)) waterTower(k, rng.float(-w / 2 + 1.5, w / 2 - 1.5), -d * rng.float(0.3, 0.7), top + 0.35);
-  else roofJunk(k, rng, w, d, top + 0.35);
-}
-
-// ---------------------------------------------------------------------------------------
 
 export class City {
   constructor(scene) {
-    this.static = new THREE.Group();
-    this.dynamic = new THREE.Group();
-    scene.add(this.static, this.dynamic);
+    this.group = new THREE.Group();
+    scene.add(this.group);
+    const atlas = getAtlas();
+    this.rects = atlas.rects;
+    this.waterTex = waterTexture();
     this.mats = {
-      kit: new THREE.MeshLambertMaterial({ vertexColors: true }),
-      ground: new THREE.MeshLambertMaterial({ color: 0xd3cabb }),
-      water: new THREE.MeshStandardMaterial({ color: 0x3fa9e0, roughness: 0.12, metalness: 0.15 }),
-      trunk: new THREE.MeshLambertMaterial({ color: 0x8b5a2b }),
+      lit: new THREE.MeshLambertMaterial({ map: atlas.texture, vertexColors: true }),
+      glow: new THREE.MeshBasicMaterial({ map: atlas.texture, vertexColors: true }),
+      sky: new THREE.MeshLambertMaterial({ map: skylineTexture(), vertexColors: true }),
+      glass: new THREE.MeshLambertMaterial({ map: skylineGlassTexture(), vertexColors: true }),
+      deco: new THREE.MeshLambertMaterial({ map: skylineDecoTexture(), vertexColors: true }),
+      walk: new THREE.MeshLambertMaterial({ map: sidewalkTexture(), vertexColors: true }),
+      asphalt: new THREE.MeshLambertMaterial({ map: asphaltTexture(), vertexColors: true }),
+      grass: new THREE.MeshLambertMaterial({ map: grassTexture(), vertexColors: true }),
+      water: new THREE.MeshPhongMaterial({ map: this.waterTex, specular: 0x3a4a5a, shininess: 60 }),
+      cable: new THREE.LineBasicMaterial({ color: 0x4a463f }),
       crown: new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }),
-      globe: new THREE.MeshBasicMaterial({ color: 0xfff1c1 }),
+      trunk: new THREE.MeshLambertMaterial({ color: 0x7a5233 }),
     };
-    this.signMats = [...SHOPS, ...SIGN_EXTRA].map((s) => new THREE.MeshBasicMaterial({ map: shopSignTexture(s) }));
     this.treeGeos = {
-      trunk: new THREE.CylinderGeometry(0.16, 0.22, 1.7, 6).translate(0, 0.85, 0),
-      crown: new THREE.IcosahedronGeometry(1.35, 1).translate(0, 2.7, 0),
+      crown: new THREE.IcosahedronGeometry(1.45, 1).scale(1, 0.92, 1).translate(0, 3.1, 0),
+      trunk: new THREE.CylinderGeometry(0.14, 0.2, 2.0, 5).translate(0, 1.0, 0),
     };
-    this.frontage = new Frontage({ slabH: WALK_Y, floorH: FLOOR_H });
-    this.buildStatic();
+    this.life = new Life(this.group, this.mats);
+    this.meshes = [];
+    this.planData = null;
+    this.time = 0;
   }
 
-  mesh(geos, shadow = false) {
-    const m = new THREE.Mesh(mergeGeometries(geos), this.mats.kit);
-    m.castShadow = shadow;
-    m.receiveShadow = true;
-    return m;
+  plan(path, level) {
+    this.planData = planCity(path, level);
+    return this.planData;
   }
 
-  // --- static backdrop: ground, river + bridge, skyline, elevated subway -------------------
-
-  buildStatic() {
-    const g = this.static;
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), this.mats.ground);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = SLAB_H;
-    ground.receiveShadow = true;
-    g.add(ground);
-
-    const k = new Kit();
-    const water = new THREE.Mesh(new THREE.PlaneGeometry(1400, RIVER.z1 - RIVER.z0), this.mats.water);
-    water.rotation.x = -Math.PI / 2;
-    water.position.set(0, SLAB_H + 0.04, (RIVER.z0 + RIVER.z1) / 2);
-    g.add(water);
-    k.box(1400, 1.0, 1, 0, SLAB_H + 0.5, RIVER.z1, 0xbfb8aa);
-    k.box(1400, 1.0, 1, 0, SLAB_H + 0.5, RIVER.z0, 0xbfb8aa);
-
-    // Suspension bridge across the river, stone towers and cables.
-    const bx = 70;
-    const bz = (RIVER.z0 + RIVER.z1) / 2;
-    const span = RIVER.z1 - RIVER.z0 + 30;
-    k.box(10, 1, span, bx, 5, bz, 0x9aa0a8);
-    const towers = [RIVER.z1 - 8, RIVER.z0 + 8];
-    for (const z of towers) {
-      k.box(12, 26, 3, bx, 13, z, 0xb59a7a);
-      k.box(4, 9, 3.3, bx, 15, z, 0x7d6a55);
-    }
-    for (const s of [-4.6, 4.6]) {
-      const a = towers[0], b = towers[1];
-      const segs = 10;
-      for (let i = 0; i < segs; i++) {
-        const t0 = i / segs, t1 = (i + 1) / segs;
-        const y0 = 26 - 20 * 4 * t0 * (1 - t0), y1 = 26 - 20 * 4 * t1 * (1 - t1);
-        const z0 = a + (b - a) * t0, z1 = a + (b - a) * t1;
-        const len = Math.hypot(z1 - z0, y1 - y0);
-        k.geo(new THREE.BoxGeometry(0.3, 0.3, len).rotateX(Math.atan2(y1 - y0, z1 - z0) * -1).translate(bx + s, (y0 + y1) / 2, (z0 + z1) / 2), 0x5a5f68);
-      }
-    }
-
-    // Distant skyline beyond the river and a ring of mid-rise city around the edges.
-    const rng = new RNG(99);
-    for (let i = 0; i < 70; i++) {
-      const x = rng.float(-420, 420);
-      const z = rng.float(-340, -240);
-      const h = rng.float(25, 110) * (Math.abs(x) < 150 ? 1.4 : 1);
-      const w = rng.float(10, 22);
-      k.box(w, h, w, x, h / 2, z, rng.pick([0x9fb0c8, 0xb4c0d3, 0x8fa2bd, 0xc3cbd8]));
-      if (rng.chance(0.25)) k.box(w * 0.6, h * 0.2, w * 0.6, x, h * 1.1, z, 0xa9b7cb);
-    }
-    for (let i = 0; i < 140; i++) {
-      const a = rng.float(-0.5, Math.PI + 0.5);
-      const r = rng.float(160, 300);
-      const x = Math.cos(a) * r;
-      const z = Math.sin(a) * r + 20;
-      const h = rng.float(12, 45);
-      const w = rng.float(10, 20);
-      k.box(w, h, w, x, h / 2, z, rng.pick([0xb98a72, 0xc4a68c, 0xb7bfcb, 0xa9796a]));
-    }
-
-    // Elevated subway along EL_Z.
-    const steel = 0x2f6b5a;
-    k.box(700, 0.9, 7, 0, 8.5, EL_Z, steel);
-    for (const dz of [-3.4, 3.4]) k.box(700, 0.6, 0.3, 0, 9.2, EL_Z + dz, 0x3d806c);
-    for (let x = -340; x <= 340; x += 14) {
-      for (const dz of [-3.2, 3.2]) k.box(0.6, 8.5, 0.6, x, 4.25, EL_Z + dz, steel);
-      k.box(0.5, 0.8, 7.4, x, 7.7, EL_Z, steel);
-    }
-    k.box(700, 0.02, 9, 0, SLAB_H + 0.01, EL_Z, 0x55575f);
-    g.add(this.mesh(k.geos, true));
-
-    const t = new Kit();
-    for (let i = 0; i < 5; i++) {
-      const x = i * 9.6;
-      t.box(9.2, 2.6, 2.8, x, 1.6, 0, 0xc9ced6);
-      t.box(9.25, 0.9, 2.85, x, 2.0, 0, 0x3b5675);
-      t.box(9.25, 0.25, 2.85, x, 1.1, 0, 0x7b3fe4);
-      t.box(9.0, 0.2, 2.6, x, 2.95, 0, 0x9aa0a8);
-    }
-    this.el = { mesh: this.mesh(t.geos, true), x: -300 };
-    this.el.mesh.position.set(this.el.x, 9.0, EL_Z + 1.6);
-    g.add(this.el.mesh);
+  heightAt(x, z) {
+    return this.planData ? this.planData.heights.at(x, z) : 0;
   }
 
-  // --- dynamic: everything shaped around the current loop --------------------------------
-
-  buildDynamic(path, _pillars, exclusions) {
-    for (const child of [...this.dynamic.children]) {
-      this.dynamic.remove(child);
-      child.geometry?.dispose();
-      child.dispose?.();
-    }
-    const world = new Kit();
-    const local = new Kit();
-    const placed = []; // footprints: center, unit axis (along the front), half sizes
-    const trees = [];
-    const p = { x: 0, z: 0 };
-    const t = { x: 0, z: 0 };
-
-    const pointFree = (x, z, minRoad) => {
-      if (path.distanceTo(x, z) < minRoad) return false;
-      if (Math.abs(z - EL_Z) < 6 || z < RIVER.z1 + 4) return false;
-      if (exclusions.some((e) => (e.x - x) ** 2 + (e.z - z) ** 2 < e.r * e.r)) return false;
-      for (const f of placed) {
-        const dx = x - f.cx, dz = z - f.cz;
-        const u = dx * f.ax + dz * f.az;
-        const v = -dx * f.az + dz * f.ax;
-        if (Math.abs(u) < f.hw + 0.2 && Math.abs(v) < f.hd + 0.2) return false;
-      }
-      return true;
+  buildDynamic(path, plan = null, exclusions = []) {
+    this.clear();
+    if (!plan || plan.path !== path) plan = this.plan(path, plan?.level ?? 0);
+    this.planData = plan;
+    const rects = this.rects;
+    const chunks = new Map();
+    const at = (x, z) => {
+      const key = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
+      let c = chunks.get(key);
+      if (!c) chunks.set(key, (c = { lit: new Builder(rects), glow: new Builder(rects), sky: new Builder(), walk: new Builder() }));
+      return c;
     };
-    const footprintFree = (cx, cz, ax, az, hw, hd, minRoad) => {
-      for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 0], [0, -1], [0, 1], [-1, 0], [1, 0], [-0.5, 1], [0.5, 1], [-0.5, -1], [0.5, -1]]) {
-        const x = cx + ax * u * hw - az * v * hd;
-        const z = cz + az * u * hw + ax * v * hd;
-        if (!pointFree(x, z, minRoad)) return false;
-      }
-      return true;
+    const far = { lit: new Builder(rects), glow: new Builder(rects), sky: new Builder(), glass: new Builder(), deco: new Builder(), walk: new Builder(), water: new Builder() };
+    const ctx = {
+      plan, at, far, lines: [], trees: [], exclusions,
+      rng: new RNG(1000 + plan.level * 3),
+      slots: path.computeSlots(MAX_SLOTS).slice(0, TRACKS[plan.level]?.maxGates ?? 8),
+      budget: new Map(),
+    };
+    ctx.fits = (x, z, top) => {
+      const k = `${Math.round(x * 2)},${Math.round(z * 2)}`;
+      let v = ctx.budget.get(k);
+      if (v === undefined) ctx.budget.set(k, (v = plan.budget(x, z)));
+      return v > top;
     };
 
-    // Centerpiece inside the loop at the point farthest from the road.
-    const b = path.bounds;
-    let best = { d: 0, x: 0, z: 0 };
-    for (let x = b.minX; x <= b.maxX; x += 2) {
-      for (let z = b.minZ; z <= b.maxZ; z += 2) {
-        if (!path.containsPoint(x, z)) continue;
-        const d = path.distanceTo(x, z);
-        if (d > best.d) best = { d, x, z };
+    const ground = new Builder();
+    ground.flat(plan.X0 - 420, plan.zW - ROAD, plan.X1 + 420, plan.Z1 + 500, ROAD_Y, { tw: 8, th: 8 }, 0xffffff);
+    const grass = new Builder();
+
+    this.buildSlabs(ctx);
+    this.buildLots(ctx);
+    this.buildFarBlocks(ctx);
+    this.buildStreets(ctx);
+    this.buildLoopside(ctx);
+    this.buildIsland(ctx, grass);
+    const bd = buildBackdrop(ctx);
+
+    const M = this.mats;
+    for (const c of chunks.values()) {
+      this.add(c.lit, M.lit, true);
+      this.add(c.glow, M.glow, false);
+      this.add(c.sky, M.sky, true);
+      this.add(c.walk, M.walk, false);
+    }
+    this.add(far.lit, M.lit, false);
+    this.add(far.glow, M.glow, false);
+    this.add(far.sky, M.sky, false);
+    this.add(far.glass, M.glass, false);
+    this.add(far.deco, M.deco, false);
+    this.add(far.walk, M.walk, false);
+    this.add(far.water, M.water, false, false);
+    this.add(ground, M.asphalt, false);
+    this.add(grass, M.grass, false);
+    if (ctx.lines.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(ctx.lines, 3));
+      const l = new THREE.LineSegments(g, M.cable);
+      this.group.add(l);
+      this.meshes.push(l);
+    }
+    this.addTrees(ctx.trees, ctx.rng);
+    this.life.build(plan, { ...bd, stationS: ctx.slots[0] });
+  }
+
+  add(builder, mat, cast, receive = true) {
+    if (builder.empty) return;
+    const m = new THREE.Mesh(builder.build(), mat);
+    m.castShadow = cast;
+    m.receiveShadow = receive;
+    this.group.add(m);
+    this.meshes.push(m);
+  }
+
+  // --- blocks ------------------------------------------------------------------------------
+
+  // Sidewalk slabs. Next to the loop they are cut along its sidewalk (which covers the seam).
+  buildSlabs({ plan, at }) {
+    const f = plan.field;
+    for (const blk of plan.blocks) {
+      const S = blk.slab;
+      const w = at((S.x0 + S.x1) / 2, (S.z0 + S.z1) / 2).walk.frame(0, 0, 0, 0);
+      if (!blk.nearLoop) {
+        w.box(S.x0, ROAD_Y - 0.05, S.z0, S.x1, SLAB_Y, S.z1, 0xffffff, TILE4, { top: TILE4 });
+        continue;
+      }
+      const ok = (x, z) => f.at(x, z) >= 6.2;
+      for (let z = S.z0; z < S.z1 - 1e-6; z += 0.5) {
+        const z1 = Math.min(z + 0.5, S.z1), zc = (z + z1) / 2;
+        for (const [a, b] of runs(S.x0, S.x1, (x) => ok(x, zc))) w.flat(a, z, b, z1, SLAB_Y, TILE4, 0xffffff);
+      }
+      const s = blk.sides, CURB = 0xd8d2c6;
+      if (s.s === 'street') for (const [a, b] of runs(S.x0, S.x1, (x) => ok(x, S.z1 - 0.25))) w.face(a, S.z1, 1, 0, 0, b - a, ROAD_Y, SLAB_Y, TILE4, CURB);
+      if (s.n === 'street') for (const [a, b] of runs(S.x0, S.x1, (x) => ok(x, S.z0 + 0.25))) w.face(b, S.z0, -1, 0, 0, b - a, ROAD_Y, SLAB_Y, TILE4, CURB);
+      if (s.e === 'street') for (const [a, b] of runs(S.z0, S.z1, (z) => ok(S.x1 - 0.25, z))) w.face(S.x1, b, 0, -1, 0, b - a, ROAD_Y, SLAB_Y, TILE4, CURB);
+      if (s.w === 'street') for (const [a, b] of runs(S.z0, S.z1, (z) => ok(S.x0 + 0.25, z))) w.face(S.x0, a, 0, 1, 0, b - a, ROAD_Y, SLAB_Y, TILE4, CURB);
+    }
+  }
+
+  buildLots(ctx) {
+    const { plan, at, rng, trees } = ctx;
+    for (const lot of plan.lots) {
+      const c = at(lot.x, lot.z);
+      c.lit.frame(lot.x, 0, lot.z, lot.ry);
+      c.glow.frame(lot.x, 0, lot.z, lot.ry);
+      buildBuilding(c.lit, c.glow, rng, lot);
+    }
+    const f = plan.field, vd = plan.viewDir, cx = plan.path.center.x, cz = plan.path.center.z;
+    const BB = ['bb:cola', 'bb:drive', 'bb:city', 'bb:radio'];
+    let bb = rng.int(0, 3);
+    for (const lot of plan.opens) {
+      const c = at(lot.x, lot.z);
+      if (lot.open === 'gas') P.gasStation(c.lit, c.glow, rng, lot.x, lot.z, lot.ry, lot.w, lot.d);
+      else if (lot.open === 'parking') {
+        // Billboards only past the loop, where they face the camera without hiding anything.
+        const behind = (lot.x - cx) * vd.x + (lot.z - cz) * vd.z < -8;
+        P.parkingLot(c.lit, c.glow, rng, lot, trees, behind && rng.chance(0.8) ? BB[bb++ % BB.length] : null);
+      }
+      else if (lot.pts.some(([x, z]) => f.at(x, z) < LOOP_FRONT + 0.2)) {
+        // Corner the loop cuts into: a few trees and a bench on the sidewalk.
+        for (let u = -lot.w / 2 + 1.6; u < lot.w / 2 - 1; u += 3.6) {
+          for (let v = -1.8; v > -lot.d + 1; v -= 3.6) {
+            const x = lot.x + lot.a.x * u + lot.n.x * v, z = lot.z + lot.a.z * u + lot.n.z * v;
+            if (f.at(x, z) > 9.2 && ctx.fits(x, z, GROUND + 4.8) && rng.chance(0.7)) trees.push({ x, z });
+          }
+        }
+      } else P.plazaLot(c.lit, c.glow, rng, lot, trees);
+    }
+  }
+
+  // Blocks away from the loop: plain boxes with tiled windows, under the sightline budget.
+  buildFarBlocks(ctx) {
+    const { plan, at, rng } = ctx;
+    const B = (x, z) => {
+      const k = `${Math.round(x)},${Math.round(z)}`;
+      let v = ctx.budget.get(k);
+      if (v === undefined) ctx.budget.set(k, (v = plan.budget(x, z)));
+      return v;
+    };
+    for (const blk of plan.blocks) {
+      if (blk.detailed) continue;
+      const Z = blk.zone;
+      const c = at((Z.x0 + Z.x1) / 2, (Z.z0 + Z.z1) / 2);
+      const xm = Z.x0 + (Z.x1 - Z.x0) * rng.float(0.35, 0.65), zm = Z.z0 + (Z.z1 - Z.z0) * rng.float(0.35, 0.65);
+      const tall = clamp((blk.dist - 50) / 150, 0, 1);
+      for (const [x0, x1] of [[Z.x0, xm], [xm, Z.x1]]) {
+        for (const [z0, z1] of [[Z.z0, zm], [zm, Z.z1]]) {
+          const cap = Math.min(B(x0, z0), B(x1, z0), B(x0, z1), B(x1, z1), B((x0 + x1) / 2, (z0 + z1) / 2)) - GROUND - 0.4;
+          let h = rng.float(8, 19) + tall * rng.float(0, 24);
+          if (rng.chance(0.06)) h += rng.float(18, 40);
+          h = Math.min(h, cap);
+          if (h < 3.6) {
+            this.farParking(c.lit, rng, x0, z0, x1, z1);
+            continue;
+          }
+          farBox(c.sky.frame(0, 0, 0, 0), x0, z0, x1, z1, GROUND, h, rng.weighted(FAR_TINTS), rng.pick(ROOFS));
+          plan.heights.add(x0, z0, x1, z1, GROUND + h);
+        }
       }
     }
-    if (best.d > 11) {
-      const r = Math.min(best.d - 6, 10);
-      if (best.d < 20) this.diner(local, best.x, best.z, r);
-      else this.park(local, best.x, best.z, r, trees);
-      local.placeInto(world, 0, 0, 0);
-      placed.push({ cx: best.x, cz: best.z, ax: 1, az: 0, hw: r, hd: r });
-    }
+  }
 
-    // Rows of buildings along both sides of the loop.
-    const rng = new RNG(1234);
-    const rows = [
-      { offset: ROAD_EDGE, depth: [8, 11], kind: 'front' },
-      { offset: ROAD_EDGE + 12.5, depth: [10, 13], kind: 'back' },
-      { offset: ROAD_EDGE + 27, depth: [12, 16], kind: 'far' },
-      { offset: ROAD_EDGE + 45, depth: [12, 18], kind: 'far' },
-      { offset: ROAD_EDGE + 65, depth: [14, 20], kind: 'far' },
-      { offset: ROAD_EDGE + 87, depth: [14, 20], kind: 'far' },
-    ];
-    for (const row of rows) {
-      for (const side of [1, -1]) {
-        let s = rng.float(0, 4);
-        while (s < path.length) {
-          path.pointAt(s, p);
-          path.tangentAt(s, t);
-          const rx = -t.z * side, rz = t.x * side; // away from the road
-          const w = rng.float(7, 12);
-          const d = rng.float(row.depth[0], row.depth[1]);
-          const fx = p.x + rx * row.offset, fz = p.z + rz * row.offset; // front middle
-          const cx = fx + (rx * d) / 2, cz = fz + (rz * d) / 2;
-          const lr = new RNG(rng.int(0, 1e9));
-          // How fast the building line moves per unit of road (> 1 on the outside of curves).
-          const q = path.pointAt(s + 1, { x: 0, z: 0 });
-          const qt = path.tangentAt(s + 1, { x: 0, z: 0 });
-          const rate = Math.max(0.3, Math.hypot(q.x - qt.z * side * row.offset - fx, q.z + qt.x * side * row.offset - fz));
-          if (footprintFree(cx, cz, t.x, t.z, w / 2, d / 2, row.offset - 0.4)) {
-            const ry = Math.atan2(-rx, -rz); // local +z faces the road
-            if (row.kind === 'front') {
-              const roll = lr.next();
-              if (roll < 0.42) walkup(local, lr, w, d);
-              else if (roll < 0.72) brownstone(local, lr, w, d);
-              else if (roll < 0.9) cornerStore(local, lr, w, d);
-              else hotel(local, lr, w, d);
-            } else {
-              block(local, lr, w, d, row.kind === 'back' ? lr.int(5, 8) : lr.int(7, 12), row.offset > 40);
-            }
-            local.placeInto(world, fx, fz, ry);
-            placed.push({ cx, cz, ax: t.x, az: t.z, hw: w / 2, hd: d / 2, row: row.kind });
-            s += (w + 0.3) / rate;
-          } else {
-            if (row.kind === 'front' && lr.chance(0.5)) {
-              const x = p.x + rx * 6.2, z = p.z + rz * 6.2;
-              if (pointFree(x, z, 5.4)) trees.push([x, z, lr.float(0.8, 1.1)]);
-            }
-            s += 2.5 / rate;
+  farParking(b, rng, x0, z0, x1, z1) {
+    b.frame(0, 0, 0, 0);
+    b.flat(x0 + 0.4, z0 + 0.4, x1 - 0.4, z1 - 0.4, GROUND + 0.03, null, 0x45474d);
+    for (let z = z0 + 2.6; z < z1 - 2; z += 5.4) {
+      for (let x = x0 + 1.8; x < x1 - 1.4; x += 2.6) {
+        if (rng.chance(0.55)) P.parkedCar(b, x, z, rng.chance(0.5) ? 0 : Math.PI, rng, GROUND + 0.03);
+      }
+    }
+  }
+
+  // --- streets ----------------------------------------------------------------------------
+
+  buildStreets(ctx) {
+    const { plan, at, rng, trees } = ctx;
+    const Bd = plan.path.bounds;
+    const near = (x, z, r) => x > Bd.minX - r && x < Bd.maxX + r && z > Bd.minZ - r && z < Bd.maxZ + r;
+
+    for (const st of plan.streets) {
+      const mx = (st.ax + st.bx) / 2, mz = (st.az + st.bz) / 2;
+      if (!near(mx, mz, 150)) continue;
+      const dx = Math.sign(st.bx - st.ax), dz = Math.sign(st.bz - st.az);
+      const px = -dz, pz = dx; // right of the segment direction
+      const c = at(mx, mz);
+      const b = c.lit;
+      const pt = (t, o) => [st.ax + dx * t + px * o, st.az + dz * t + pz * o];
+      const rect = (t0, t1, o0, o1, color, y = MARK_Y) => {
+        const [x0, z0] = pt(t0, o0), [x1, z1] = pt(t1, o1);
+        b.frame(0, 0, 0, 0).flat(Math.min(x0, x1), Math.min(z0, z1), Math.max(x0, x1), Math.max(z0, z1), y, null, color);
+      };
+      const t0 = st.startMouth != null ? st.startMouth + 3.4 : FRONT + 0.8;
+      const t1 = GRID - (st.endMouth != null ? st.endMouth + 3.4 : FRONT + 0.8);
+
+      if (st.el || st.water) {
+        rect(t0, t1, -0.24, -0.11, 0xf2c12e);
+        rect(t0, t1, 0.11, 0.24, 0xf2c12e);
+      } else {
+        for (let t = t0 + 0.5; t < t1 - 1; t += 4.5) rect(t, Math.min(t + 2.2, t1), -0.07, 0.07, MARK);
+      }
+
+      // Crosswalks and stop lines at city intersections.
+      if (near(mx, mz, 100)) {
+        for (const end of [0, 1]) {
+          if ((end ? st.endMouth : st.startMouth) != null) continue;
+          const ta = end ? GRID - FRONT + 0.2 : ROAD + 0.2, tb = end ? GRID - ROAD - 0.2 : FRONT - 0.2;
+          for (let o = -2.85; o < 2.8; o += 0.95) rect(ta, tb, o, o + 0.5, MARK);
+          const ts = end ? GRID - FRONT - 0.7 : FRONT + 0.3;
+          rect(ts, ts + 0.4, end ? 0.1 : -3.0, end ? 3.0 : -0.1, MARK);
+        }
+      }
+
+      if (st.el || st.water) continue;
+      // Parked cars along both curbs.
+      if (near(mx, mz, 110)) {
+        for (const side of [-1, 1]) {
+          for (let t = t0 + 1.5; t < t1 - 2; t += 5.8) {
+            if (!rng.chance(0.5)) continue;
+            const [x, z] = pt(t + rng.float(-0.4, 0.4), side * 2.25);
+            P.parkedCar(b, x, z, Math.atan2(dx, dz) + (side > 0 ? 0 : Math.PI), rng);
+          }
+        }
+      }
+      // Street trees in pits.
+      if (near(mx, mz, 85)) {
+        for (const side of [-1, 1]) {
+          for (let t = t0 + 1.2; t < t1 - 1; t += rng.float(6.5, 9)) {
+            const [x, z] = pt(t, side * (ROAD + 0.9));
+            if (!rng.chance(0.7) || !ctx.fits(x, z, GROUND + 4.8)) continue;
+            b.frame(0, 0, 0, 0).flat(x - 0.6, z - 0.6, x + 0.6, z + 0.6, SLAB_Y + 0.03, null, 0x5b4a3a);
+            trees.push({ x, z });
           }
         }
       }
     }
 
-    this.placed = placed;
-    // Street furniture: lamps, hydrants, mailboxes, phone booths, subway entrance.
-    const props = {
-      add: (w, h, d, x, y, z, color, ry = 0) => world.geo(new THREE.BoxGeometry(w, h, d).rotateY(ry).translate(x, y, z), color),
-      addGeometry: (g, color) => world.geo(g, color),
+    // Where streets meet the loop: crosswalk over the sidewalk gap, stop line, traffic light.
+    for (const j of plan.junctions) {
+      const { x, z, dx, dz, mouth } = j;
+      const px = -dz, pz = dx;
+      const c = at(x, z);
+      const pt = (t, o) => [x + dx * t + px * o, z + dz * t + pz * o];
+      const rect = (t0, t1, o0, o1, color) => {
+        const [x0, z0] = pt(t0, o0), [x1, z1] = pt(t1, o1);
+        c.lit.frame(0, 0, 0, 0).flat(Math.min(x0, x1), Math.min(z0, z1), Math.max(x0, x1), Math.max(z0, z1), MARK_Y, null, color);
+      };
+      for (let o = -2.85; o < 2.8; o += 0.95) rect(mouth - 2.9, mouth - 0.3, o, o + 0.5, MARK);
+      rect(mouth + 0.3, mouth + 0.7, -3.0, -0.1, MARK);
+      const [lx, lz] = pt(mouth + 1.2, -(ROAD + 0.75));
+      P.trafficLight(c.lit, c.glow, lx, lz, Math.atan2(dx, dz), -1, GROUND);
+    }
+  }
+
+  // --- along the loop ---------------------------------------------------------------------
+
+  buildLoopside(ctx) {
+    const { plan, at, rng, trees, slots } = ctx;
+    const path = plan.path, L = path.length;
+    const dS = (a, b) => {
+      const d = (((a - b) % L) + L) % L;
+      return Math.min(d, L - d);
     };
-    const excl = (x, z, r = 0) => exclusions.some((e) => (e.x - x) ** 2 + (e.z - z) ** 2 < (e.r + r) ** 2);
-    this.frontage.sidewalk(path, excl, props);
-    const globes = this.frontage.lamps(path, excl, props);
+    const station = slots[0];
+    const used = [];
+    const p = { x: 0, z: 0 }, t = { x: 0, z: 0 };
+    const pose = (s, u) => {
+      path.pointAt(s, p);
+      path.tangentAt(s, t);
+      return { x: p.x - t.z * u, z: p.z + t.x * u, px: p.x, pz: p.z, rx: -t.z, rz: t.x, tx: t.x, tz: t.z };
+    };
+    const free = (s, u, r = 1.6) => {
+      if (slots.some((q) => dS(s, q) < 3.4)) return false;
+      if (u < 0 && dS(s, station) < 7.5) return false;
+      for (const [s2, u2, r2] of used) if (Math.sign(u2) === Math.sign(u) && dS(s, s2) < r + r2) return false;
+      for (const k of [-r, 0, r]) {
+        const q = pose(s + k, u);
+        if (plan.gapAt(q.x, q.z)) return false;
+        for (const e of ctx.exclusions) if (Math.hypot(q.x - e.x, q.z - e.z) < e.r) return false;
+      }
+      return true;
+    };
+    const toRoad = (q, u) => (u < 0 ? Math.atan2(q.rx, q.rz) : Math.atan2(-q.rx, -q.rz));
+    const vd = plan.viewDir;
+    // Trees only where they can't hide the road from the camera.
+    const treeOk = (q) => (q.x - q.px) * vd.x + (q.z - q.pz) * vd.z < -0.5 && ctx.fits(q.x, q.z, WALK_Y + 4.8);
 
-    const add = (m) => this.dynamic.add(m);
-    add(this.mesh(world.geos, true));
-    add(new THREE.Mesh(mergeGeometries(globes.map((g) => g.index ? g.toNonIndexed() : g).map((g) => (g.deleteAttribute('uv'), g))), this.mats.globe));
-    for (const [idx, list] of world.signs) add(new THREE.Mesh(mergeGeometries(list), this.signMats[idx]));
-    if (trees.length) {
-      const trunk = new THREE.InstancedMesh(this.treeGeos.trunk, this.mats.trunk, trees.length);
-      const crown = new THREE.InstancedMesh(this.treeGeos.crown, this.mats.crown, trees.length);
-      trees.forEach(([x, z, sc], i) => {
-        _m.compose(new THREE.Vector3(x, WALK_Y, z), _q.identity(), new THREE.Vector3(sc, sc, sc));
-        trunk.setMatrixAt(i, _m);
-        crown.setMatrixAt(i, _m);
-        crown.setColorAt(i, _c.set(TREE_COLORS[i % TREE_COLORS.length]));
-      });
-      trunk.castShadow = crown.castShadow = true;
-      add(trunk);
-      add(crown);
+    // Bus shelters and subway entrances on the long straights (outer sidewalk).
+    let shelters = 0, subways = 0;
+    for (const [s0, s1] of [...path.straights].sort((a, b) => b[1] - b[0] - (a[1] - a[0]))) {
+      if (s1 - s0 < 16) continue;
+      if (shelters < 2) {
+        const s = s0 + (s1 - s0) * rng.float(0.25, 0.4);
+        if (free(s, -5.3, 2.8)) {
+          const q = pose(s, -5.3);
+          const c = at(q.x, q.z);
+          P.busShelter(c.lit, q.x, q.z, toRoad(q, -1), WALK_Y);
+          used.push([s, -5.3, 2.8]);
+          shelters++;
+        }
+      }
+      if (subways < 2) {
+        const s = s0 + (s1 - s0) * rng.float(0.6, 0.75);
+        if (free(s, -6.35, 2.4)) {
+          const q = pose(s, -6.35);
+          const c = at(q.x, q.z);
+          P.subwayEntrance(c.lit, c.glow, q.x, q.z, Math.atan2(q.tx, q.tz), WALK_Y);
+          used.push([s, -6.35, 2.4]);
+          subways++;
+        }
+      }
+    }
+
+    // Street lights, alternating sides.
+    for (let s = 3, k = 0; s < L - 2; s += 11, k++) {
+      const u = k % 2 ? -4.75 : 4.75;
+      if (!free(s, u, 0.6)) continue;
+      const q = pose(s, u);
+      const c = at(q.x, q.z);
+      P.streetLamp(c.lit, c.glow, q.x, q.z, toRoad(q, u), WALK_Y);
+      used.push([s, u, 0.6]);
+    }
+
+    // Small furniture and trees.
+    const OUTER = [['none', 7], ['hydrant', 2], ['trash', 2], ['news', 2], ['mail', 1], ['phone', 0.7], ['bench', 1], ['tree', 3], ['cart', 0.3]];
+    const INNER = [['none', 6], ['bench', 2], ['trash', 1.5], ['hydrant', 1], ['tree', 4]];
+    for (const side of [-1, 1]) {
+      for (let s = rng.float(0, 3); s < L; s += rng.float(2.8, 4.2)) {
+        const kind = rng.weighted(side < 0 ? OUTER : INNER);
+        if (kind === 'none') continue;
+        const curb = kind === 'tree' || kind === 'hydrant' || kind === 'news';
+        const u = side * (curb ? 5.1 : 6.75);
+        if (!free(s, u, 1.1)) continue;
+        const q = pose(s, u);
+        if (kind === 'tree' && !treeOk(q)) continue;
+        const c = at(q.x, q.z);
+        const ry = toRoad(q, u);
+        switch (kind) {
+          case 'hydrant': P.hydrant(c.lit, q.x, q.z, WALK_Y); break;
+          case 'trash': P.trashCan(c.lit, q.x, q.z, WALK_Y); break;
+          case 'news': P.newsBoxes(c.lit, q.x, q.z, ry + Math.PI, rng, WALK_Y); break;
+          case 'mail': P.mailbox(c.lit, q.x, q.z, ry, WALK_Y); break;
+          case 'phone': P.phoneBooth(c.lit, q.x, q.z, ry, WALK_Y); break;
+          case 'bench': P.bench(c.lit, q.x, q.z, ry, WALK_Y); break;
+          case 'cart': P.hotdogCart(c.lit, q.x, q.z, ry, WALK_Y); break;
+          case 'tree':
+            c.lit.frame(0, 0, 0, 0).flat(q.x - 0.6, q.z - 0.6, q.x + 0.6, q.z + 0.6, WALK_Y + 0.02, null, 0x5b4a3a);
+            trees.push({ x: q.x, z: q.z, y: WALK_Y });
+            break;
+        }
+        used.push([s, u, 1.1]);
+      }
     }
   }
 
-  // Round island with a chrome diner, patio umbrellas and planters.
-  diner(k, cx, cz, r) {
-    const y = SLAB_H;
-    k.geo(new THREE.CylinderGeometry(r, r, 0.12, 40).translate(cx, y + 0.06, cz), 0xc98f6a);
-    const s = Math.min(1, (r - 1) / 6.5);
-    const W = 9 * s, D = 5 * s;
-    k.box(W + 0.4, 0.7, D + 0.2, cx, y + 0.35, cz, 0x1c1f26);
-    for (let i = 0; i < Math.round(W / 0.78); i++) k.box(0.39, 0.5, D + 0.25, cx - W / 2 + 0.2 + i * 0.78, y + 0.35, cz, 0xf4f1e6);
-    k.box(W, 2.4, D, cx, y + 1.9, cz, 0xdfe3e8);
-    k.box(W + 0.1, 1.0, D + 0.1, cx, y + 1.8, cz, LIT);
-    for (let x = -W / 2 + 0.8; x < W / 2; x += 1.1) k.box(0.1, 1.0, D + 0.14, cx + x, y + 1.8, cz, 0xdfe3e8);
-    k.box(W + 0.15, 0.22, D + 0.15, cx, y + 1.18, cz, 0xe23b5a);
-    k.box(W + 0.15, 0.22, D + 0.15, cx, y + 2.42, cz, 0xe23b5a);
-    k.box(W + 0.3, 0.3, D + 0.3, cx, y + 3.2, cz, 0xe23b5a);
-    k.box(W + 0.35, 0.08, D + 0.35, cx, y + 3.0, cz, 0xff3fa4);
-    k.box(W * 0.8, 0.3, D * 0.8, cx, y + 3.45, cz, 0xb9c0c8);
-    for (let i = 0; i < 8; i++) k.box(0.5, 0.1, 1.1, cx - 2 + i * 0.5, y + 2.75, cz + D / 2 + 0.5, i % 2 ? 0xffffff : 0xe23b5a);
-    k.box(4.4, 1.4, 0.3, cx + 1.2, y + 4.4, cz, 0xe23b5a);
-    k.sign(DINER_SIGN, 4.0, 1.1, cx + 1.2, y + 4.4, cz + 0.17);
-    k.sign(DINER_SIGN, 4.0, 1.1, cx + 1.2, y + 4.4, cz - 0.17, Math.PI);
-    k.geo(new THREE.CylinderGeometry(0.9, 0.7, 1.4, 16).translate(cx - 2.6, y + 4.3, cz), 0xffffff);
-    k.geo(new THREE.CylinderGeometry(0.82, 0.82, 0.08, 16).translate(cx - 2.6, y + 5.0, cz), 0x5a3a24);
-    k.geo(new THREE.TorusGeometry(0.4, 0.12, 6, 12).translate(cx - 1.6, y + 4.3, cz), 0xffffff);
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2 + 0.3;
-      const x = cx + Math.cos(a) * (r - 2), z = cz + Math.sin(a) * (r - 2);
-      if (Math.abs(x - cx) < W / 2 + 1 && Math.abs(z - cz) < D / 2 + 1) continue;
-      k.geo(new THREE.ConeGeometry(1.2, 0.5, 8).translate(x, y + 2.2, z), i % 2 ? 0xe23b5a : 0x2e8b57);
-      k.geo(new THREE.CylinderGeometry(0.05, 0.05, 2, 6).translate(x, y + 1.1, z), 0xf4f1e6);
-      k.geo(new THREE.CylinderGeometry(0.5, 0.5, 0.06, 10).translate(x, y + 0.75, z), 0xf4f1e6);
+  // --- the loop's island -----------------------------------------------------------------
+
+  buildIsland(ctx, grassB) {
+    const { plan, at, rng, trees } = ctx;
+    const path = plan.path, f = plan.field, B = path.bounds;
+    const inside = (x, z) => path.containsPoint(x, z);
+
+    grassB.frame(0, 0, 0, 0);
+    for (let z = B.minZ; z < B.maxZ; z += 0.5) {
+      for (const [a, b] of runs(B.minX, B.maxX, (x) => inside(x, z + 0.25) && f.at(x, z + 0.25) >= 7.0)) {
+        grassB.flat(a, z, b, z + 0.5, ISLAND_Y, { tw: 6, th: 6 }, 0xffffff);
+      }
     }
-    const n = Math.round(r * 2);
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      const x = cx + Math.cos(a) * (r - 0.6), z = cz + Math.sin(a) * (r - 0.6);
-      k.box(0.8, 0.5, 0.8, x, y + 0.3, z, 0x9a5b3c);
-      k.geo(new THREE.IcosahedronGeometry(0.45, 0).translate(x, y + 0.8, z), i % 3 ? 0x4caf50 : 0xf06292);
+
+    // Paths along the grid lines inside the loop, a fountain where they cross.
+    const segs = plan.interiorSegs;
+    const PATH = 0xd8c9ae;
+    for (const s of segs) {
+      const len = Math.hypot(s.bx - s.ax, s.bz - s.az);
+      const dx = (s.bx - s.ax) / len, dz = (s.bz - s.az) / len;
+      const c = at((s.ax + s.bx) / 2, (s.az + s.bz) / 2);
+      for (const [a, b] of runs(0, len, (t) => f.at(s.ax + dx * t, s.az + dz * t) >= 7.3)) {
+        const x0 = s.ax + dx * a, z0 = s.az + dz * a, x1 = s.ax + dx * b, z1 = s.az + dz * b;
+        c.lit.frame(0, 0, 0, 0).flat(Math.min(x0, x1) - (s.h ? 0 : 1.2), Math.min(z0, z1) - (s.h ? 1.2 : 0), Math.max(x0, x1) + (s.h ? 0 : 1.2), Math.max(z0, z1) + (s.h ? 1.2 : 0), ISLAND_Y + 0.03, null, PATH);
+        for (let t = a + 4; t < b - 2; t += 12) {
+          const x = s.ax + dx * t + dz * 1.8, z = s.az + dz * t - dx * 1.8;
+          P.parkLamp(c.lit, c.glow, x, z, ISLAND_Y);
+          if (rng.chance(0.6)) P.bench(c.lit, s.ax + dx * (t + 3) - dz * 1.9, s.az + dz * (t + 3) + dx * 1.9, Math.atan2(dz, -dx), ISLAND_Y);
+        }
+      }
+    }
+    const deg = new Map();
+    for (const s of segs) for (const k of [`${s.ax},${s.az}`, `${s.bx},${s.bz}`]) deg.set(k, (deg.get(k) ?? 0) + 1);
+    const fountains = [];
+    for (const [k, n] of deg) {
+      const [x, z] = k.split(',').map(Number);
+      if (n < 2 || f.at(x, z) < 11) continue;
+      const c = at(x, z);
+      c.lit.frame(0, 0, 0, 0).disc(x, z, 4.6, ISLAND_Y + 0.04, 16, PATH);
+      P.fountain(c.lit, c.glow, x, z, ISLAND_Y);
+      fountains.push({ x, z });
+    }
+
+    const dseg = (x, z, s) => {
+      const tx = clamp(x, Math.min(s.ax, s.bx), Math.max(s.ax, s.bx)), tz = clamp(z, Math.min(s.az, s.bz), Math.max(s.az, s.bz));
+      return Math.hypot(x - tx, z - tz);
+    };
+    const clear = (x, z) => {
+      let c = f.at(x, z) - 7.8;
+      for (const s of segs) c = Math.min(c, dseg(x, z, s) - 1.7);
+      for (const q of fountains) c = Math.min(c, Math.hypot(x - q.x, z - q.z) - 5.2);
+      return inside(x, z) ? c : -1;
+    };
+    const rectFits = (x0, z0, x1, z1) => {
+      for (let x = x0; x <= x1 + 0.01; x += Math.max(0.5, (x1 - x0) / 8)) if (clear(x, z0) < 0 || clear(x, z1) < 0) return false;
+      for (let z = z0; z <= z1 + 0.01; z += Math.max(0.5, (z1 - z0) / 8)) if (clear(x0, z) < 0 || clear(x1, z) < 0) return false;
+      return true;
+    };
+
+    for (const cell of plan.interior) {
+      const ccx = (cell.x0 + cell.x1) / 2, ccz = (cell.z0 + cell.z1) / 2;
+      let best = null;
+      for (let z = cell.z0 + 0.5; z < cell.z1; z += 1) {
+        for (let x = cell.x0 + 0.5; x < cell.x1; x += 1) {
+          const c = clear(x, z);
+          const score = c - 0.02 * Math.hypot(x - ccx, z - ccz);
+          if (!best || score > best.score) best = { x, z, c, score };
+        }
+      }
+      if (!best || best.c < 2.2) continue;
+      const { x: cx, z: cz } = best;
+      const ch = at(cx, cz);
+      const b = ch.lit, g = ch.glow;
+      let used = 0; // radius taken by the feature
+      const feature = cell.feature;
+
+      if (feature === 'diner') {
+        for (let len = 12; len >= 7; len--) {
+          const hw = len / 2 + 0.3;
+          if (!rectFits(cx - hw, cz - 2.8, cx + hw, cz + 4.0)) continue;
+          b.frame(0, 0, 0, 0);
+          for (let z = cz - 4.5; z < cz + 6.5; z += 0.5) {
+            for (const [a, e] of runs(cx - hw - 2.5, cx + hw + 2.5, (x) => clear(x, z + 0.25) > -0.3)) b.flat(a, z, e, z + 0.5, ISLAND_Y + 0.03, null, 0x8e8b86);
+          }
+          P.diner(b, g, cx, cz, 0, len);
+          for (const sx of [1, -1]) {
+            const x = cx + sx * (hw + 1.4), z = cz + 3.6;
+            if (clear(x, z) > -0.5 && ctx.fits(x, z, ISLAND_Y + 9.8)) {
+              P.dinerPoleSign(b, g, x, z, 0, ISLAND_Y);
+              break;
+            }
+          }
+          for (const sx of [-1, 1]) {
+            const x = cx + sx * (hw + 1.5), z = cz - 0.6;
+            if (clear(x, z - 2.1) > 0.2 && clear(x, z + 2.1) > 0.2) P.parkedCar(b, x, z, rng.chance(0.5) ? 0 : Math.PI, rng, ISLAND_Y + 0.03);
+          }
+          for (let k = 0; k < 10; k++) {
+            const a = (k / 10) * Math.PI * 2 + 0.3;
+            const x = cx + Math.cos(a) * (hw + 3.2), z = cz + Math.sin(a) * 4.8;
+            if (clear(x, z) > 0.4 && ctx.fits(x, z, ISLAND_Y + 7.6)) P.palm(b, x, z, ISLAND_Y, rng.float(5.2, 6.8));
+          }
+          used = hw + 2;
+          break;
+        }
+      } else if (feature === 'gas') {
+        for (const [w, d] of [[12, 10], [10, 9], [9, 7.5]]) {
+          if (!rectFits(cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2)) continue;
+          P.gasStation(b, g, rng, cx, cz + d / 2, 0, w, d);
+          used = Math.hypot(w, d) / 2;
+          break;
+        }
+      } else if (feature === 'court') {
+        for (const [w, d] of [[17, 11], [14.5, 10], [12, 8.5]]) {
+          if (!rectFits(cx - w / 2, cz - d / 2, cx + w / 2, cz + d / 2)) continue;
+          P.courtLot(b, rng, cx, cz + d / 2, 0, w, d, ISLAND_Y);
+          used = Math.hypot(w, d) / 2;
+          break;
+        }
+      } else if (feature === 'playground' && best.c >= 7.2) {
+        P.playground(b, cx, cz, ISLAND_Y);
+        for (const [bx, bz, ry] of [[cx, cz + 6.2, 0], [cx - 6.2, cz, -Math.PI / 2]]) if (clear(bx, bz) > 0) P.bench(b, bx, bz, ry + Math.PI, ISLAND_Y);
+        used = 7.2;
+      } else if (feature === 'pond' && best.c >= 6.8) {
+        P.pond(b, cx, cz, ISLAND_Y);
+        used = 6.8;
+      } else if (feature === 'ballfield' && best.c >= 8.5) {
+        P.ballfield(b, cx, cz + 4, ISLAND_Y);
+        used = 8.5;
+      }
+
+      // Trees on the rest of the lawn.
+      const cand = [];
+      if (feature === 'grove' || !used) P.grove(rng, cx - best.c, cz - best.c, cx + best.c, cz + best.c, cand, ISLAND_Y);
+      const area = (cell.x1 - cell.x0) * (cell.z1 - cell.z0);
+      for (let i = 0; i < area / 55; i++) cand.push({ x: rng.float(cell.x0, cell.x1), z: rng.float(cell.z0, cell.z1), y: ISLAND_Y });
+      for (const tr of cand) {
+        if (clear(tr.x, tr.z) < 0.6 || Math.hypot(tr.x - cx, tr.z - cz) < used + 1.6) continue;
+        if (!ctx.fits(tr.x, tr.z, ISLAND_Y + 4.9)) continue;
+        trees.push(tr);
+      }
     }
   }
 
-  // Bigger loops: a park with a basketball court, paths and trees.
-  park(k, cx, cz, r, trees) {
-    const y = SLAB_H;
-    k.geo(new THREE.CylinderGeometry(r, r, 0.1, 40).translate(cx, y + 0.05, cz), 0x7cc35a);
-    k.box(r * 2 - 1, 0.04, 2, cx, y + 0.12, cz, 0xe9dcc2);
-    k.box(2, 0.04, r * 2 - 1, cx, y + 0.12, cz, 0xe9dcc2);
-    const bx = cx + r * 0.45, bz = cz - r * 0.45;
-    k.box(9, 0.06, 6, bx, y + 0.14, bz, 0x3f8f6b);
-    k.box(8, 0.06, 5, bx, y + 0.16, bz, 0xd9773b);
-    k.box(0.12, 0.02, 5, bx, y + 0.2, bz, 0xffffff);
-    for (const s of [-1, 1]) {
-      k.box(0.2, 3, 0.2, bx + s * 4.3, y + 1.5, bz, 0x30343c);
-      k.box(0.1, 1, 1.6, bx + s * 4.1, y + 2.9, bz, 0xffffff);
-    }
-    const rng = new RNG(5);
-    for (let i = 0; i < r * 2.5; i++) {
-      const a = rng.float(0, 6.28), d = rng.float(2, r - 1);
-      const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
-      if (Math.abs(x - cx) < 1.5 || Math.abs(z - cz) < 1.5 || (Math.abs(x - bx) < 5.5 && Math.abs(z - bz) < 4)) continue;
-      trees.push([x, z, rng.float(0.9, 1.3)]);
+  addTrees(list, rng) {
+    if (!list.length) return;
+    const crown = new THREE.InstancedMesh(this.treeGeos.crown, this.mats.crown, list.length);
+    const trunk = new THREE.InstancedMesh(this.treeGeos.trunk, this.mats.trunk, list.length);
+    list.forEach((t, i) => {
+      const s = t.s ?? rng.float(0.85, 1.2);
+      _q.setFromAxisAngle(_up, rng.float(0, Math.PI * 2));
+      _m.compose(_p.set(t.x, t.y ?? GROUND, t.z), _q, _s.set(s, s * rng.float(0.9, 1.12), s));
+      crown.setMatrixAt(i, _m);
+      trunk.setMatrixAt(i, _m);
+      crown.setColorAt(i, _c.set(rng.pick(TREE_COLORS)));
+    });
+    for (const m of [crown, trunk]) {
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.computeBoundingSphere();
+      this.group.add(m);
+      this.meshes.push(m);
     }
   }
 
   update(dt) {
-    this.el.x += 14 * dt;
-    if (this.el.x > 340) this.el.x = -380;
-    this.el.mesh.position.x = this.el.x;
+    this.time += dt;
+    this.waterTex.offset.set(this.time * 0.004, this.time * 0.012);
+    this.life.update(dt);
+  }
+
+  clear() {
+    const shared = new Set(Object.values(this.treeGeos));
+    for (const m of this.meshes) {
+      this.group.remove(m);
+      if (!shared.has(m.geometry)) m.geometry.dispose();
+      if (m.isInstancedMesh) m.dispose();
+    }
+    this.meshes = [];
+    this.life.clear();
   }
 }
